@@ -1,0 +1,13 @@
+PySide6>=6.8
+ollama>=0.4
+pyyaml
+send2trash
+faster-whisper
+sounddevice
+numpy
+pypdf
+winrt-runtime
+winrt-Windows.Media.Control
+winrt-Windows.Storage.Streams
+winrt-Windows.Foundation
+winrt-Windows.Foundation.Collections

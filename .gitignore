@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+assistant-ile/construction/
+*.log
+journal_rangement.json
+memoire.json

@@ -1,0 +1,95 @@
+# ============================================================
+#  Configuration de ton assistant — modifie ce fichier librement
+# ============================================================
+
+# Modèle IA local (Ollama). qwen3:8b = bon choix pour 8 Go de VRAM.
+# 12 Go et plus : qwen3:14b   |   moins de 8 Go : qwen3:4b
+modele: qwen3:8b
+ollama_url: http://localhost:11434
+
+# Reconnaissance vocale (Whisper) : tiny, base, small, medium
+whisper_modele: small
+langue: fr
+
+# ---------- Rangement méthodique ----------
+# Chaque fichier va dans le dossier de son TYPE, puis de sa SOURCE (le site ou l'appli d'où il vient).
+#   facture.pdf reçue sur Gmail     -> Documents/Classement/PDF/Gmail/facture.pdf
+#   image enregistrée depuis Discord -> Images/Classement/Discord/image.png
+#   Capture d'écran …               -> Images/Classement/Captures d'écran/…
+# Tout est noté dans journal_rangement.json : l'assistant sait toujours où il a mis tes fichiers.
+classement:
+  # Sous-dossiers dans le dossier du type. Tu peux ajouter l'année ou le mois :
+  #   "{source}"  |  "{source}/{annee}"  |  "{source}/{mois}"
+  modele: "{source}"
+  # Pour changer un dossier ou ajouter un type (les autres gardent leur réglage par défaut) :
+  types:
+    PDF: {dossier: ~/Documents/Classement/PDF, extensions: [.pdf]}
+    Word: {dossier: ~/Documents/Classement/Word, extensions: [.doc, .docx, .odt, .rtf]}
+    Bloc-notes: {dossier: ~/Documents/Classement/Bloc-notes, extensions: [.txt, .md, .log]}
+    Images: {dossier: ~/Pictures/Classement}
+  # Noms lisibles pour tes sites (les plus connus sont déjà reconnus : Gmail, Discord, WhatsApp…)
+  sources:
+    mail.google.com: Gmail
+    # monlycee.net: Lycée
+
+# ---------- Téléchargements ----------
+# Quand un téléchargement se termine, la goutte te propose où le ranger.
+#   proposer : elle te montre l'endroit, tu cliques pour ranger
+#   auto     : elle le range toute seule (au bout de 20 secondes, le temps que tu l'ouvres si besoin)
+#   rien     : elle ne surveille pas
+telechargements:
+  mode: proposer
+  dossier: ~/Downloads
+
+# ---------- Comportement ----------
+# En jeu ou devant une vidéo en plein écran, la goutte se cache (elle revient après).
+masquer_en_plein_ecran: true
+
+# ---------- Musique ----------
+# La musique en cours s'affiche sur la goutte : cover à gauche, titre, artiste, temps à droite.
+# Clique sur la cover pour mettre en pause.
+musique:
+  afficher: true
+  # applis suivies : ajoute chrome, msedge ou brave pour YouTube… ou mets [toutes]
+  applis: [AppleMusic, iTunes, Spotify]
+
+# ---------- Twitch ----------
+# surnom -> nom de la chaîne Twitch (ce qui suit twitch.tv/)
+streamers:
+  kameto: kamet0
+  kamet0: kamet0
+  zerator: zerator
+  gotaga: gotaga
+
+# ---------- Sites favoris ----------
+sites:
+  youtube: https://www.youtube.com
+  gmail: https://mail.google.com
+  netflix: https://www.netflix.com
+
+# ---------- Applications ----------
+# nom -> chemin de l'exécutable (les jeux Steam sont détectés tout seuls)
+applications:
+  discord: "%LOCALAPPDATA%/Discord/Update.exe --processStart Discord.exe"
+  spotify: "%APPDATA%/Spotify/Spotify.exe"
+  bloc-notes: notepad
+  calculatrice: calc
+  explorateur: explorer
+
+# Jeux hors Steam (Epic, Riot, Battle.net…) : nom -> chemin ou lien
+jeux:
+  league of legends: "C:/Riot Games/Riot Client/RiotClientServices.exe --launch-product=league_of_legends --launch-patchline=live"
+  lol: "C:/Riot Games/Riot Client/RiotClientServices.exe --launch-product=league_of_legends --launch-patchline=live"
+  valorant: "C:/Riot Games/Riot Client/RiotClientServices.exe --launch-product=valorant --launch-patchline=live"
+
+# Dossiers Steam supplémentaires si Steam n'est pas au chemin par défaut
+steam_dossiers: []
+
+# ---------- Mails ----------
+# Gmail : active la validation en 2 étapes, puis crée un
+# "mot de passe d'application" sur myaccount.google.com/apppasswords
+# Outlook/Hotmail : serveur outlook.office365.com
+email:
+  serveur_imap: imap.gmail.com
+  adresse: ""
+  mot_de_passe_app: ""
