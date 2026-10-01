@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Assistant Island : mots de passe",
+  "version": "1.0.0",
+  "description": "Quand tu te connectes à un site, confie l'identifiant et le mot de passe à l'assistant de ce PC. Rien ne part sur internet.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnIjhQO7DjVeEkCn38i8PCWXw60Dy5jnnx5gynmiVr8fVcIkOp3ic9n0OGTASBa9RjY3hbt6oIKbebU6PY4TcqfeQfnJYEt0EmjTYgyIE/CYIktw/iNAJZ4NUVsM781d4qjWG53K92jnqEhqOZyb7ONpk/G9naWJGG2QzHFZO2lrsjxG0EEg9fTziUeFeJT4alZjjPkvpAKKugLihhCbq8VE3u1WlYE1Imoc298S0Tz9F2Lqg18VPV0kyDSiYDn8kUQLJzN/Mk6iSsM4MKAKfdhC9YFeW3fKjejbdhlQBRAQFSVXwZeDzLuZ25A1yxvofcl8icHmpwwkDOdKV8MkE4wIDAQAB",
+  "permissions": ["nativeMessaging", "storage", "tabs"],
+  "background": {
+    "service_worker": "fond.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["page.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "16": "icone16.png",
+    "48": "icone48.png",
+    "128": "icone128.png"
+  }
+}

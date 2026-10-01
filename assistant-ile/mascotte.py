@@ -31,7 +31,6 @@ LANGUE = QColor("#FF7FA8")
 EXPRESSIONS = {
     "repos":     dict(ouvert=1, taille=1.0, joie=0, triste=0, sourire=.55, bouche=0, largeur=1.0, joues=.45, incl=0, haut=0),
     "content":   dict(ouvert=1, taille=1.0, joie=1, triste=0, sourire=1.0, bouche=.35, largeur=1.05, joues=.95, incl=0, haut=.05),
-    "reflechit": dict(ouvert=.8, taille=.95, joie=0, triste=0, sourire=.1, bouche=0, largeur=.7, joues=.35, incl=.14, haut=.38),
     "ecoute":    dict(ouvert=1, taille=1.15, joie=0, triste=0, sourire=.3, bouche=.28, largeur=.6, joues=.5, incl=-.12, haut=.05),
     "erreur":    dict(ouvert=.9, taille=.95, joie=0, triste=1, sourire=-.75, bouche=0, largeur=.8, joues=.2, incl=0, haut=-.05),
     "faim":      dict(ouvert=1, taille=1.28, joie=0, triste=0, sourire=.5, bouche=1.0, largeur=1.15, joues=1, incl=0, haut=0),
@@ -41,8 +40,34 @@ EXPRESSIONS = {
     "dort":      dict(ouvert=0, taille=1.0, joie=0, triste=0, sourire=.3, bouche=0, largeur=.8, joues=.55, incl=.1, haut=-.12),
     "tape":      dict(ouvert=.95, taille=1.0, joie=0, triste=0, sourire=.45, bouche=0, largeur=.9, joues=.5, incl=0, haut=-.42),
     "logo":      dict(ouvert=1, taille=1.08, joie=0, triste=0, sourire=.95, bouche=.32, largeur=1.05, joues=.85, incl=0, haut=.02),
+    # il se creuse les méninges : un sourcil froncé, l'autre levé, un œil plissé, le regard en l'air
+    "reflechit": dict(ouvert=.85, taille=.95, joie=0, triste=0, sourire=-.1, bouche=0, largeur=.6, joues=.3, incl=.1, haut=.4,
+                      sourcil=.7, asym=1),
+    # il a trouvé : grands yeux, sourcils levés, bouche ouverte (l'ampoule s'allume au-dessus)
+    "eureka":    dict(ouvert=1, taille=1.28, joie=0, triste=0, sourire=1.0, bouche=.6, largeur=.95, joues=.9, incl=0, haut=.3,
+                      sourcil=-.9),
+    # il s'est cogné : yeux en > <
+    "aie":       dict(ouvert=1, taille=1.0, joie=0, triste=0, sourire=-.6, bouche=0, largeur=.8, joues=.25, incl=0, haut=0,
+                      croix=1),
+    # secoué : yeux en spirale, des étoiles lui tournent autour
+    "etourdi":   dict(ouvert=1, taille=1.1, joie=0, triste=0, sourire=-.1, bouche=.3, largeur=.5, joues=.3, incl=0, haut=0,
+                      spirale=1),
+    # chatouillé
+    "rire":      dict(ouvert=1, taille=1.0, joie=1, triste=0, sourire=1.0, bouche=.8, largeur=1.15, joues=1, incl=0, haut=.1),
+    "baille":    dict(ouvert=0, taille=1.0, joie=0, triste=0, sourire=0, bouche=1.0, largeur=.7, joues=.4, incl=.06, haut=.2),
+    "clin":      dict(ouvert=1, taille=1.0, joie=0, triste=0, sourire=.9, bouche=0, largeur=1.0, joues=.7, incl=-.1, haut=0,
+                      clin=1),
+    "alerte":    dict(ouvert=1, taille=1.3, joie=0, triste=0, sourire=.2, bouche=.45, largeur=.6, joues=.5, incl=0, haut=.1,
+                      sourcil=-.8),
 }
+# sourcil : froncé (1) ou levé (-1) | asym : un sourcil levé, un œil plissé | croix : yeux en > <
+# spirale : yeux qui tournent | clin : clin d'œil
+for _e in EXPRESSIONS.values():
+    for _cle in ("sourcil", "asym", "croix", "spirale", "clin"):
+        _e.setdefault(_cle, 0)
 
+ANIMEES = ("miam", "reflechit", "faim", "surpris", "ecoute", "eureka", "aie", "etourdi", "rire", "baille", "alerte")
+JAUNE = QColor("#FFD23F")
 SOMMEIL = 150        # secondes sans bouger la souris avant qu'elle s'endorme
 
 
@@ -62,6 +87,10 @@ class Mascotte:
         self._clin, self._prochain_clin = 0.0, 2.5
         self._souris, self._souris_t = None, time.monotonic()
         self.dodo = False
+        self.balance = 0.0                   # la tête qui dodeline (réflexion, étourdissement)
+        self._humeur_vue, self._depuis = "repos", 0.0     # depuis quand il a cette humeur
+        self._a_baille = False
+        self._prochaine_manie = random.uniform(20, 45)   # petits gestes quand il ne se passe rien
 
     # ---------------------------------------------------------------- réactions
     def humeur(self):
@@ -71,9 +100,9 @@ class Mascotte:
 
     def reagir(self, humeur, duree=1.0):
         self._passagere, self._fin_passagere = humeur, self.t + duree
-        if humeur in ("content", "miam", "surpris"):
-            self.sauter(0.7 if humeur != "content" else 1.0)
-        if humeur == "erreur":
+        if humeur in ("content", "miam", "surpris", "eureka", "alerte"):
+            self.sauter(0.7 if humeur not in ("content", "eureka") else 1.0)
+        if humeur in ("erreur", "aie"):
             self.tremble = 1.0
 
     def sauter(self, force=1.0):
@@ -84,6 +113,7 @@ class Mascotte:
 
     def reveiller(self):
         self._souris_t = time.monotonic()
+        self._a_baille = False
         if self.dodo:
             self.dodo = False
             self.reagir("surpris", 0.6)
@@ -100,18 +130,40 @@ class Mascotte:
             self.dodo = True
         immobile = maintenant - self._souris_t
 
+        # la vie quand il ne se passe rien : il bâille avant de s'endormir, cligne de l'œil, sautille
+        if self.base == "repos" and not self._passagere_active():
+            if immobile > SOMMEIL - 8 and not self.dodo and not self._a_baille:
+                self._a_baille = True
+                self.reagir("baille", 2.6)
+            self._prochaine_manie -= dt
+            if self._prochaine_manie <= 0 and not self.dodo:
+                self._prochaine_manie = random.uniform(20, 45)
+                if random.random() < 0.5:
+                    self.reagir("clin", 0.8)
+                else:
+                    self.sauter(0.45)
+
         humeur = self.humeur()
+        if humeur != self._humeur_vue:
+            self._humeur_vue, self._depuis = humeur, self.t
         cible = EXPRESSIONS.get(humeur, EXPRESSIONS["repos"])
         k = 1 - math.exp(-dt * 11)
         for cle, v in cible.items():
             self.p[cle] += (v - self.p[cle]) * k
         if humeur == "miam":
             self.p["bouche"] = 0.12 + 0.4 * (0.5 + 0.5 * math.sin(self.t * 15))
+        elif humeur == "rire":                       # il est secoué de rire
+            self.p["bouche"] = 0.55 + 0.3 * math.sin(self.t * 22)
+            if int(self.t * 6) != int((self.t - dt) * 6):
+                self.saut.vitesse -= 1.5
+        dodeline = {"reflechit": 0.13 * math.sin(self.t * 1.5), "etourdi": 0.22 * math.sin(self.t * 5.5),
+                    "baille": -0.08}.get(humeur, 0.0)
+        self.balance += (dodeline - self.balance) * (1 - math.exp(-dt * 9))
 
         # où regarder
         if humeur == "reflechit":
-            lacet, tangage = 0.4 * math.sin(self.t * 0.9), 0.0
-        elif humeur in ("tape", "dort"):
+            lacet, tangage = 0.4 * math.sin(self.t * 0.9), 0.08 * math.sin(self.t * 2.3)
+        elif humeur in ("tape", "dort", "aie", "etourdi", "baille", "eureka"):
             lacet, tangage = 0.0, 0.0
         elif immobile > 5 and humeur == "repos":
             lacet = 0.45 * math.sin(self.t * 0.37) * math.sin(self.t * 0.13 + 1)
@@ -138,7 +190,10 @@ class Mascotte:
     def agite(self):
         """Vrai si quelque chose bouge vite (pour décider de la fréquence d'animation)."""
         return (not self.saut.calme(0.01) or not self.lacet.calme(0.004) or self.tremble > 0
-                or self._clin > 0 or self.humeur() in ("miam", "reflechit", "faim", "surpris", "ecoute"))
+                or self._clin > 0 or self.humeur() in ANIMEES)
+
+    def _passagere_active(self):
+        return bool(self._passagere) and self.t < self._fin_passagere
 
     # ---------------------------------------------------------------- dessin
     def _forme(self, R):
@@ -173,7 +228,7 @@ class Mascotte:
             p.drawEllipse(QPointF(0, -0.2 * R), 1.9 * R, 1.9 * R)
 
         p.translate(0, self.saut.valeur * R)
-        p.rotate(math.degrees(P["incl"] + self.lacet.valeur * 0.12))
+        p.rotate(math.degrees(P["incl"] + self.lacet.valeur * 0.12 + self.balance))
         p.translate(0, R)
         p.scale(sx, sy)
         p.translate(0, -R)
@@ -217,6 +272,135 @@ class Mascotte:
         stylo.setCapStyle(Qt.RoundCap)
         p.strokePath(trait, stylo)
         p.restore()
+        self._effets(p, centre, R)
+
+    # ---------------------------------------------------------------- ce qui flotte autour de lui
+    def _effets(self, p, centre, R):
+        """Engrenages quand il réfléchit, ampoule quand il trouve, étoiles quand il s'est cogné…
+        Tout tient en haut à droite de sa tête, pour rester dans la bulle."""
+        humeur, t = self.humeur(), self.t
+        age = t - self._depuis
+        fin = max(0.0, min(1.0, (self._fin_passagere - t) / 0.25)) if self._passagere_active() else 1.0
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        p.translate(centre.x(), centre.y() + 0.28 * R + self.saut.valeur * R)
+        apparition = min(1.0, age / 0.2)
+        p.setOpacity(p.opacity() * apparition * fin)
+        if humeur == "reflechit":
+            self._engrenage(p, QPointF(0.9 * R, -1.02 * R), 0.36 * R, t * 1.7, 6, QColor(255, 255, 255, 235))
+            self._engrenage(p, QPointF(1.36 * R, -0.6 * R), 0.24 * R, -t * 2.55 + 0.3, 5, MAUVE)
+            if age > 8:
+                self._sueur(p, R, t)
+        elif humeur == "eureka":
+            self._ampoule(p, R, age)
+        elif humeur in ("aie", "etourdi"):
+            self._etoiles(p, R, t)
+        elif humeur == "rire":
+            self._coeurs(p, R, t)
+        elif humeur == "ecoute":
+            self._ondes(p, R, t)
+        elif humeur == "alerte":
+            self._exclamation(p, R, age)
+        elif humeur == "erreur":
+            self._sueur(p, R, t)
+        p.restore()
+
+    @staticmethod
+    def _engrenage(p, centre, rayon, angle, dents, couleur):
+        roue, pas_dent = QPainterPath(), 2 * math.pi / dents
+        for k in range(dents):
+            a = angle + k * pas_dent
+            for i, (r, da) in enumerate(((0.72, -0.3), (1.0, -0.17), (1.0, 0.17), (0.72, 0.3))):
+                point = QPointF(centre.x() + rayon * r * math.cos(a + da * pas_dent * 1.6),
+                                centre.y() + rayon * r * math.sin(a + da * pas_dent * 1.6))
+                roue.lineTo(point) if (k or i) else roue.moveTo(point)
+        roue.closeSubpath()
+        trou = QPainterPath()
+        trou.addEllipse(centre, rayon * 0.3, rayon * 0.3)
+        p.setPen(Qt.NoPen)
+        p.setBrush(couleur)
+        p.drawPath(roue.subtracted(trou))
+
+    @staticmethod
+    def _etoile(p, x, y, s):
+        etoile = QPainterPath(QPointF(x, y - s))
+        for px, py in ((0.24, -0.24), (1, 0), (0.24, 0.24), (0, 1), (-0.24, 0.24), (-1, 0), (-0.24, -0.24)):
+            etoile.lineTo(x + px * s, y + py * s)
+        etoile.closeSubpath()
+        p.drawPath(etoile)
+
+    def _ampoule(self, p, R, age):
+        pop = min(1.0, age / 0.22)
+        echelle = pop + 0.35 * math.sin(math.pi * pop)          # elle surgit en dépassant un peu sa taille
+        c, r = QPointF(0.95 * R, -1.02 * R), 0.36 * R * echelle
+        lueur = QRadialGradient(c, 2.6 * r)
+        lueur.setColorAt(0, QColor(255, 220, 90, round(150 + 50 * math.sin(self.t * 14))))
+        lueur.setColorAt(1, QColor(255, 220, 90, 0))
+        p.setPen(Qt.NoPen)
+        p.setBrush(lueur)
+        p.drawEllipse(c, 2.6 * r, 2.6 * r)
+        p.setBrush(QColor("#B9B3CC"))                             # le culot
+        p.drawRoundedRect(QRectF(c.x() - 0.42 * r, c.y() + 0.7 * r, 0.84 * r, 0.62 * r), 0.15 * r, 0.15 * r)
+        verre = QRadialGradient(QPointF(c.x() - 0.3 * r, c.y() - 0.35 * r), 1.4 * r)
+        verre.setColorAt(0, QColor("#FFFBD6"))
+        verre.setColorAt(1, JAUNE)
+        p.setBrush(verre)
+        p.drawEllipse(c, r, r)
+        stylo = QPen(QColor(255, 226, 120, 230), max(0.9, 0.16 * r))
+        stylo.setCapStyle(Qt.RoundCap)
+        p.setPen(stylo)
+        for angle in (-150, -90, -30):                            # les rayons
+            a = math.radians(angle)
+            p.drawLine(QPointF(c.x() + 1.35 * r * math.cos(a), c.y() + 1.35 * r * math.sin(a)),
+                       QPointF(c.x() + 1.8 * r * math.cos(a), c.y() + 1.8 * r * math.sin(a)))
+
+    def _etoiles(self, p, R, t):
+        p.setPen(Qt.NoPen)
+        p.setBrush(JAUNE)
+        for k in range(3):                                        # elles tournent au-dessus de sa tête
+            a = t * 5.5 + k * 2 * math.pi / 3
+            self._etoile(p, 0.85 * R * math.cos(a), -1.18 * R + 0.26 * R * math.sin(a),
+                         R * (0.17 + 0.05 * math.sin(a)))
+
+    def _coeurs(self, p, R, t):
+        p.setPen(Qt.NoPen)
+        for k in range(2):
+            phase = (t * 0.9 + k * 0.5) % 1
+            x, y, s = (0.75 + 0.35 * k) * R, (-0.75 - 0.75 * phase) * R, R * (0.13 + 0.09 * phase)
+            coeur = QPainterPath(QPointF(x, y + s))
+            coeur.cubicTo(QPointF(x - 1.7 * s, y - 0.2 * s), QPointF(x - 0.6 * s, y - 1.3 * s), QPointF(x, y - 0.35 * s))
+            coeur.cubicTo(QPointF(x + 0.6 * s, y - 1.3 * s), QPointF(x + 1.7 * s, y - 0.2 * s), QPointF(x, y + s))
+            p.setBrush(QColor(JOUE.red(), JOUE.green(), JOUE.blue(), round(240 * math.sin(math.pi * phase))))
+            p.drawPath(coeur)
+
+    def _ondes(self, p, R, t):
+        p.setBrush(Qt.NoBrush)
+        for k in range(3):                                        # le son qui arrive
+            phase = (t * 1.3 - k * 0.22) % 1
+            stylo = QPen(QColor(255, 255, 255, round(210 * (1 - phase))), max(1.0, 0.09 * R))
+            stylo.setCapStyle(Qt.RoundCap)
+            p.setPen(stylo)
+            r = R * (1.15 + 0.5 * phase)
+            p.drawArc(QRectF(-r, -r, 2 * r, 2 * r), 22 * 16, 44 * 16)
+
+    def _exclamation(self, p, R, age):
+        bond = abs(math.sin(age * 7)) * 0.18 * R
+        x, y = 0.98 * R, -1.25 * R - bond
+        p.setPen(Qt.NoPen)
+        p.setBrush(JAUNE)
+        p.drawRoundedRect(QRectF(x - 0.1 * R, y, 0.2 * R, 0.52 * R), 0.1 * R, 0.1 * R)
+        p.drawEllipse(QPointF(x, y + 0.74 * R), 0.11 * R, 0.11 * R)
+
+    def _sueur(self, p, R, t):
+        phase = (t * 0.75) % 1
+        x, y, s = -0.8 * R, (-0.78 + 0.34 * phase) * R, 0.15 * R
+        goutte = QPainterPath(QPointF(x, y - 1.7 * s))
+        goutte.cubicTo(QPointF(x + 0.3 * s, y - s), QPointF(x + s, y - 0.3 * s), QPointF(x + s, y + 0.2 * s))
+        goutte.arcTo(QRectF(x - s, y - 0.8 * s, 2 * s, 2 * s), 0, -180)
+        goutte.cubicTo(QPointF(x - s, y - 0.3 * s), QPointF(x - 0.3 * s, y - s), QPointF(x, y - 1.7 * s))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(150, 215, 255, round(235 * math.sin(math.pi * phase))))
+        p.drawPath(goutte)
 
     # ---------------------------------------------------------------- visage projeté sur la sphère
     def _projeter(self, p, R, lon, lat):
@@ -261,7 +445,27 @@ class Mascotte:
         clin = 1 - math.sin(math.pi * (1 - self._clin / 0.15)) if self._clin > 0 else 1
         w = 0.21 * R * P["taille"]
         h = 0.3 * R * P["taille"]
-        hh = h * P["ouvert"] * clin * (1 - P["joie"])
+        trait = QPen(ENCRE, max(0.9, 0.06 * R))
+        trait.setCapStyle(Qt.RoundCap)
+        trait.setJoinStyle(Qt.RoundJoin)
+        if P["croix"] > 0.5:                 # cogné : > <
+            chevron = QPainterPath(QPointF(cote * w * 0.5, -0.13 * R))
+            chevron.lineTo(QPointF(-cote * w * 0.35, 0))
+            chevron.lineTo(QPointF(cote * w * 0.5, 0.13 * R))
+            p.strokePath(chevron, trait)
+            return
+        if P["spirale"] > 0.5:               # étourdi : les yeux tournent
+            spirale = QPainterPath(QPointF(0, 0))
+            for i in range(1, 26):
+                a = i * 0.52 + self.t * 9 * cote
+                spirale.lineTo(QPointF(w * 0.62 * i / 25 * math.cos(a), w * 0.62 * i / 25 * math.sin(a)))
+            p.strokePath(spirale, QPen(ENCRE, max(0.8, 0.045 * R)))
+            return
+        self._sourcil(p, R, cote, w, h)
+        joie = max(P["joie"], P["clin"] if cote == 1 else 0)          # le clin d'œil ferme l'œil droit en ^
+        plisse = 1 - 0.32 * P["asym"] * (cote == -1)                  # il plisse l'œil gauche en réfléchissant
+        P = dict(P, joie=joie)
+        hh = h * P["ouvert"] * clin * (1 - P["joie"]) * plisse
         p.setPen(Qt.NoPen)
         if hh > 0.07 * R:
             oeil = QPainterPath()
@@ -294,6 +498,26 @@ class Mascotte:
             stylo = QPen(couleur, max(0.9, 0.062 * R))
             stylo.setCapStyle(Qt.RoundCap)
             p.strokePath(arc, stylo)
+
+    def _sourcil(self, p, R, cote, w, h):
+        """Froncé (il se concentre), levé (surprise), ou un de chaque (il réfléchit)."""
+        s, asym = self.p["sourcil"], self.p["asym"]
+        force = max(abs(s), asym)
+        if force < 0.08:
+            return
+        if asym > 0.5:                       # le gauche froncé et bas, le droit levé
+            s, leve = (s, -0.02 * R) if cote == -1 else (-0.5, 0.13 * R)
+        else:
+            leve = max(0.0, -s) * 0.09 * R
+        y = -h * 0.78 - leve
+        interieur = QPointF(-cote * w * 0.62, y + s * 0.1 * R)
+        exterieur = QPointF(cote * w * 0.62, y - s * 0.05 * R)
+        couleur = QColor(ENCRE)
+        couleur.setAlphaF(borne(force * 1.5, 0, 1))
+        stylo = QPen(couleur, max(0.9, 0.06 * R))
+        stylo.setCapStyle(Qt.RoundCap)
+        p.setPen(stylo)
+        p.drawLine(interieur, exterieur)
 
     def _bouche(self, p, R):
         P = self.p
@@ -329,7 +553,7 @@ class VueMascotte(QWidget):
         self.mascotte = mascotte
         self.rayon = rayon
         self.halo = halo
-        marge = 4.2 if halo else 2.9      # le halo déborde : on prévoit la place pour ne pas le couper
+        marge = 4.2 if halo else 3.5      # le halo et ce qui flotte autour de Plop débordent : on prévoit la place
         self.setFixedSize(round(rayon * marge), round(rayon * max(marge, 3.2)))
 
     def centre_global(self):

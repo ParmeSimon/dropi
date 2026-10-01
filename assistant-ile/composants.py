@@ -4,9 +4,10 @@ Tout est dessiné à la main avec l'anticrénelage : les coins arrondis
 des feuilles de style Qt sont crénelés (bords « en escalier »).
 """
 import math
+import time
 from pathlib import Path
 
-from PySide6.QtCore import (Qt, QRectF, QPointF, QSize, Signal, QFileInfo, QVariantAnimation,
+from PySide6.QtCore import (Qt, QRect, QRectF, QPointF, QSize, Signal, QFileInfo, QVariantAnimation, QTimer,
                             QEasingCurve)
 from PySide6.QtGui import (QPainter, QColor, QPainterPath, QFont, QPen, QBrush, QPalette,
                            QLinearGradient, QPixmap, QTextDocument, QImageReader, QTransform,
@@ -50,7 +51,10 @@ ICONES = {
     "disque": "", "balai": "", "horloge": "", "doublon": "", "paquet": "",
     "annuler": "", "dossier_ouvert": "", "telechargement": "", "bureau": "",
 }
-ICONES.update(note=chr(0xEC4F), pause=chr(0xE769))
+ICONES.update(note=chr(0xEC4F), pause=chr(0xE769), cle=chr(0xE8D7), regenerer=chr(0xE72C), copier=chr(0xE8C8),
+              arreter=chr(0xE71A), camera=chr(0xE722), minuteur=chr(0xE916), cloche=chr(0xEA8F), cadenas=chr(0xE72E),
+              eclair=chr(0xE945), pc=chr(0xE7F8), applis=chr(0xE71D), message=chr(0xE8BD), code=chr(0xE943),
+              tableau=chr(0xE9D2), document=chr(0xE8A5), video=chr(0xE714), oeil=chr(0xE7B3))
 
 
 def police(taille, gras=False, famille="Segoe UI Variable Text"):
@@ -76,7 +80,7 @@ def forme_arrondie(rect, rayon):
 
 # ------------------------------------------------------------------ Dessins partagés
 
-def dessiner_ombre(p, chemin, etendue=16.0, decalage=5.0, opacite=0.42, couches=9):
+def dessiner_ombre(p, chemin, etendue=9.0, decalage=2.0, opacite=0.16, couches=12):
     """Ombre douce façon Fluent sous n'importe quelle forme : couches de plus en plus serrées."""
     alpha = 1 - (1 - opacite) ** (1 / couches)
     couleur = QColor(0, 0, 0, round(alpha * 255))
@@ -84,7 +88,7 @@ def dessiner_ombre(p, chemin, etendue=16.0, decalage=5.0, opacite=0.42, couches=
     p.translate(0, decalage)
     p.setBrush(couleur)
     for i in range(couches):
-        s = etendue * (1 - i / couches) ** 1.6
+        s = etendue * (1 - i / couches) ** 2.2
         stylo = QPen(couleur, 2 * s)
         stylo.setJoinStyle(Qt.RoundJoin)
         p.setPen(stylo)
@@ -208,6 +212,65 @@ class Bouton(QAbstractButton):
             x += 22
         p.setFont(self.font())
         p.drawText(QRectF(x, 0, self.width() - x, self.height()), Qt.AlignVCenter, self.text())
+
+
+class Tuile(QAbstractButton):
+    """Une action de l'accueil : carte à bordure, icône de la couleur d'accent, libellé sur une ou deux lignes."""
+
+    def __init__(self, icone, texte, info="", parent=None):
+        super().__init__(parent)
+        self.icone = ICONES.get(icone, icone)
+        self.setText(texte)
+        self.setToolTip(info)
+        self.setFixedHeight(44)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setAttribute(Qt.WA_Hover)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def sizeHint(self):
+        return QSize(150, 44)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+        survol, appui, a = self.underMouse(), self.isDown(), accent()
+        if survol or appui:
+            p.setPen(QPen(QColor(a.red(), a.green(), a.blue(), 190), 1.5))
+            p.setBrush(QColor(a.red(), a.green(), a.blue(), 20 if appui else 34))
+        else:
+            p.setPen(QPen(QColor(255, 255, 255, 34), 1))
+            p.setBrush(CARTE)
+        p.drawRoundedRect(r, 12, 12)
+        p.setPen(a)
+        p.setFont(police_icones(17))
+        p.drawText(QRectF(11, 0, 24, self.height()), Qt.AlignCenter, self.icone)
+        p.setPen(TEXTE if survol else TEXTE_2)
+        p.setFont(police(12, gras=True))
+        p.drawText(QRectF(43, 3, self.width() - 51, self.height() - 6),
+                   Qt.AlignVCenter | Qt.AlignLeft | Qt.TextWordWrap, self.text())
+
+
+class TitreSection(QWidget):
+    """« 01 — RAPIDE » : petit titre espacé, précédé d'une icône, au-dessus d'un groupe de tuiles."""
+
+    def __init__(self, numero, titre, icone, parent=None):
+        super().__init__(parent)
+        self.icone = ICONES.get(icone, icone)
+        self.texte = f"{numero:02d} — {titre.upper()}"
+        self.setFixedHeight(20)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        a = accent()
+        p.setPen(a)
+        p.setFont(police_icones(12))
+        p.drawText(QRectF(2, 0, 16, self.height()), Qt.AlignCenter, self.icone)
+        fonte = police(10, gras=True)
+        fonte.setLetterSpacing(QFont.AbsoluteSpacing, 1.6)
+        p.setFont(fonte)
+        p.drawText(QRectF(25, 0, self.width() - 25, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.texte)
 
 
 # ------------------------------------------------------------------ Zone de saisie
@@ -472,6 +535,40 @@ class TexteRiche(QTextBrowser):
         pal.setColor(QPalette.HighlightedText, QColor(0, 0, 0))
         self.setPalette(pal)
 
+        self.largeur_max = largeur_max
+        self._cible, self._n, self._reste, self._avant = texte, len(texte), 0.0, 0.0
+        self._machine = QTimer(self, interval=33, timeout=self._pas)
+        self.changer(texte)
+
+    def ecrire(self, texte, direct=False):
+        """Effet machine à écrire : le texte arrive lettre à lettre, à une vitesse qui suit celle du modèle
+        (il produit par à-coups de quelques mots : sans ça, on croirait que l'appli rame)."""
+        self._cible = texte
+        if direct or len(texte) < self._n:
+            self._n = len(texte)
+            self._machine.stop()
+            self.changer(texte)
+        elif not self._machine.isActive() and self._n < len(texte):
+            self._avant = time.monotonic()
+            self._machine.start()
+
+    def _pas(self):
+        maintenant = time.monotonic()
+        dt, self._avant = min(maintenant - self._avant, 0.2), maintenant
+        retard = len(self._cible) - self._n
+        if retard <= 0:
+            self._machine.stop()
+            return
+        # vitesse : au moins 14 signes/s ; plus on a de retard, plus on accélère (rattrapé en ~1 s)
+        self._reste += max(14.0, retard / 1.0) * dt
+        pas = int(self._reste)
+        if pas:
+            self._reste -= pas
+            self._n = min(len(self._cible), self._n + pas)
+            self.changer(self._cible[:self._n])
+
+    def changer(self, texte):
+        """Met le texte en page (aussi appelé pendant que la réponse s'écrit, pour l'afficher au fur et à mesure)."""
         doc = self.document()
         doc.setDocumentMargin(0)
         doc.setIndentWidth(18)
@@ -484,8 +581,8 @@ class TexteRiche(QTextBrowser):
         interligne.setLineHeight(138, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
         curseur.mergeBlockFormat(interligne)
 
-        doc.setTextWidth(largeur_max)
-        largeur = min(math.ceil(doc.idealWidth()) + 4, largeur_max)
+        doc.setTextWidth(self.largeur_max)
+        largeur = min(math.ceil(doc.idealWidth()) + 4, self.largeur_max)
         doc.setTextWidth(largeur)
         self.setFixedSize(largeur, math.ceil(doc.size().height()) + 2)
 
@@ -975,6 +1072,105 @@ class CarteMenage(QWidget):
 
 # ------------------------------------------------------------------ Le fil
 
+class Selection(QWidget):
+    """Choisir une zone de l'écran à la souris : l'écran est figé et assombri, on trace un cadre.
+
+    Échap ou clic droit : on annule. Le signal donne l'image de la zone, en vrais pixels.
+    """
+    choisie = Signal(QPixmap)
+
+    def __init__(self, ecran):
+        super().__init__()
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setCursor(Qt.CrossCursor)
+        self.image = ecran.grabWindow(0)
+        self.setGeometry(ecran.geometry())
+        self.depart = self.fin = None
+
+    def _zone(self):
+        return QRectF(self.depart, self.fin).normalized() if self.depart is not None else QRectF()
+
+    def mousePressEvent(self, e):
+        if e.button() != Qt.LeftButton:
+            self.close()
+            return
+        self.depart = self.fin = e.position()
+        self.update()
+
+    def mouseMoveEvent(self, e):
+        if self.depart is not None:
+            self.fin = e.position()
+            self.update()
+
+    def mouseReleaseEvent(self, e):
+        if e.button() != Qt.LeftButton or self.depart is None:
+            return
+        zone, k = self._zone(), self.image.devicePixelRatio()
+        self.close()
+        if zone.width() > 8 and zone.height() > 8:
+            self.choisie.emit(self.image.copy(QRect(round(zone.x() * k), round(zone.y() * k),
+                                                    round(zone.width() * k), round(zone.height() * k))))
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape:
+            self.close()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.drawPixmap(self.rect(), self.image)
+        voile = QPainterPath()
+        voile.addRect(QRectF(self.rect()))
+        zone = self._zone()
+        if not zone.isEmpty():
+            trou = QPainterPath()
+            trou.addRect(zone)
+            voile = voile.subtracted(trou)
+        p.fillPath(voile, QColor(0, 0, 0, 120))
+        if zone.isEmpty():
+            texte = "Trace un cadre autour du texte à lire   ·   Échap pour annuler"
+            p.setFont(police(15, gras=True))
+            boite = QRectF(p.fontMetrics().boundingRect(texte)).adjusted(-18, -10, 18, 10)
+            boite.moveCenter(QPointF(self.width() / 2, 70))
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(23, 23, 26, 235))
+            p.drawRoundedRect(boite, boite.height() / 2, boite.height() / 2)
+            p.setPen(TEXTE)
+            p.drawText(boite, Qt.AlignCenter, texte)
+        else:
+            p.setPen(QPen(accent(), 1.5))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(zone)
+
+
+class Points(QWidget):
+    """Trois points qui pulsent : l'IA lit ta demande, le premier mot arrive bientôt."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(46, 22)
+        self._phase = 0.0
+        self._minuteur = QTimer(self, interval=40, timeout=self._avancer)
+        self._minuteur.start()
+
+    def _avancer(self):
+        self._phase += 0.14
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        for i in range(3):
+            force = (math.sin(self._phase - i * 0.9) + 1) / 2
+            couleur = QColor(TEXTE_2)
+            couleur.setAlpha(round(70 + 160 * force))
+            p.setBrush(couleur)
+            rayon = 3.0 + 1.2 * force
+            p.drawEllipse(QPointF(10 + i * 13, 11), rayon, rayon)
+
+
 class Fil(QScrollArea):
     """Le fil de la conversation."""
 
@@ -1001,6 +1197,7 @@ class Fil(QScrollArea):
         self.setWidget(contenu)
         self.derniere_puce = None
         self._viser = None
+        self._attente = None             # (rangée, points) tant que l'IA n'a encore rien écrit
         self.verticalScrollBar().rangeChanged.connect(self._defiler)
 
     def _defiler(self, _, fin):
@@ -1014,7 +1211,24 @@ class Fil(QScrollArea):
     def vide(self):
         return self.pile.count() <= 1
 
-    def _ajouter(self, widget, a_droite=False, espace_avant=0):
+    def attente(self):
+        """Les trois points « je réfléchis » en bas du fil (ils disparaissent dès que quelque chose arrive)."""
+        if self._attente is None:
+            points = Points()
+            self._ajouter(points, _attente=True)
+            self._attente = (self._derniere_ligne, points)
+
+    def fin_attente(self):
+        if self._attente is not None:
+            ligne, points = self._attente
+            self._attente = None
+            self.pile.removeItem(ligne)
+            points.deleteLater()
+            ligne.deleteLater()
+
+    def _ajouter(self, widget, a_droite=False, espace_avant=0, _attente=False):
+        if not _attente:
+            self.fin_attente()
         ligne = QHBoxLayout()
         ligne.setContentsMargins(0, espace_avant, 0, 0)
         if a_droite:
@@ -1023,6 +1237,7 @@ class Fil(QScrollArea):
         if not a_droite:
             ligne.addStretch(1)
         self.pile.insertLayout(self.pile.count() - 1, ligne)
+        self._derniere_ligne = ligne
         return widget
 
     def moi(self, texte, piece=""):
@@ -1030,8 +1245,12 @@ class Fil(QScrollArea):
         self._viser = None
         self._ajouter(Bulle(texte, piece), a_droite=True, espace_avant=0 if self.vide() else 6)
 
-    def ia(self, texte):
-        self._ajouter(TexteRiche(texte))
+    def ia(self, texte, ecrire=False):
+        """La réponse de l'IA. ecrire=True : elle s'écrit petit à petit (effet machine à écrire)."""
+        bloc = self._ajouter(TexteRiche("" if ecrire else texte))
+        if ecrire:
+            bloc.ecrire(texte)
+        return bloc
 
     def action(self, texte, sur_clic=None):
         self.derniere_puce = self._ajouter(PuceAction(texte, sur_clic))
@@ -1045,6 +1264,7 @@ class Fil(QScrollArea):
         return self._ajouter(w)
 
     def effacer(self):
+        self._attente = None
         self.derniere_puce = None
         while self.pile.count() > 1:
             element = self.pile.takeAt(0)

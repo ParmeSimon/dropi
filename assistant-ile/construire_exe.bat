@@ -1,5 +1,5 @@
 @echo off
 cd /d "%~dp0"
-echo Construction et installation de Assistant.exe...
+echo Construction de Dropi-Setup.exe...
 python construire_exe.py
 pause

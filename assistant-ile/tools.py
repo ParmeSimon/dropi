@@ -5,14 +5,13 @@ dans FONCTIONS et dans schemas() en bas du fichier.
 """
 import os
 import re
-import email
-import imaplib
+import time
+import shutil
 import difflib
 import datetime
 import subprocess
 import webbrowser
 from pathlib import Path
-from email.header import decode_header, make_header
 
 from send2trash import send2trash
 
@@ -21,12 +20,16 @@ import musique
 import memoire
 import classement
 import menage
+import rappels
+import reglages
+import messagerie
 
 CONFIG = {}
 
 
 def init(config):
     CONFIG.update(config)
+    messagerie.ANCIENNE.update(config.get("email") or {})
     classement.init({**(config.get("classement") or {}), "telechargements": config.get("telechargements") or {}})
 
 
@@ -46,7 +49,7 @@ def _lancer(cmd):
     subprocess.Popen(argv, cwd=dossier)
 
 
-def _meilleur(nom, choix):
+def _meilleur(nom, choix, seuil=0.5):
     """Trouve le nom le plus proche dans une liste (tolère les fautes)."""
     nom = nom.lower().strip()
     choix = list(choix)
@@ -56,7 +59,7 @@ def _meilleur(nom, choix):
     contient = [c for c in choix if nom in c.lower()]
     if contient:
         return min(contient, key=len)
-    proches = difflib.get_close_matches(nom, [c.lower() for c in choix], n=1, cutoff=0.5)
+    proches = difflib.get_close_matches(nom, [c.lower() for c in choix], n=1, cutoff=seuil)
     if proches:
         return next(c for c in choix if c.lower() == proches[0])
     return None
@@ -172,19 +175,22 @@ def catalogue_jeux():
             for nom, appid in _steam_detail().items()]
     par_commande = {}
     for nom, cmd in CONFIG.get("jeux", {}).items():
-        par_commande.setdefault(cmd, []).append(nom)       # « lol » et « league of legends » = un seul jeu
+        if _installe(cmd):                                 # un jeu de config.yaml pas installé ici n'existe pas
+            par_commande.setdefault(cmd, []).append(nom)   # « lol » et « league of legends » = un seul jeu
     for cmd, noms in par_commande.items():
         jeux.append({"nom": _joli_nom(max(noms, key=len)), "lancement": cmd, "icone": _icone_hors_steam(cmd)})
     return sorted(jeux, key=lambda j: j["nom"].lower())
 
 
-def trouver_jeu(nom):
+def trouver_jeu(nom, seuil=0.5):
     """Le jeu du catalogue qui correspond à un nom (tolère les fautes et les surnoms)."""
     catalogue = catalogue_jeux()
     par_nom = {j["nom"]: j for j in catalogue}
     for alias, cmd in CONFIG.get("jeux", {}).items():
-        par_nom.setdefault(alias, next((j for j in catalogue if j["lancement"] == cmd), None))
-    trouve = _meilleur(nom, par_nom)
+        jeu = next((j for j in catalogue if j["lancement"] == cmd), None)
+        if jeu:
+            par_nom.setdefault(alias, jeu)
+    trouve = _meilleur(nom, par_nom, seuil)
     return par_nom[trouve] if trouve else None
 
 
@@ -201,17 +207,114 @@ def lancer_jeu(nom):
     return f"{jeu['nom']} se lance."
 
 
+_applis_windows = {}
+_applis_lues = 0.0
+USAGES_ICI = {}                 # usage -> applications installées, rempli au lancement (prechauffer)
+
+
+# Pour chaque usage, les applications connues : seules celles qui sont installées sont proposées à l'IA.
+USAGES = {
+    "musique": ["Apple Music", "Spotify", "iTunes", "Deezer", "YouTube Music", "Lecteur multimédia"],
+    "navigateur": ["Brave", "Chrome", "Firefox", "Edge", "Opera"],
+    "mails": ["Outlook", "Thunderbird", "Courrier"],
+    "discussion": ["Discord", "Microsoft Teams", "WhatsApp", "Slack", "Telegram", "Signal"],
+    "texte": ["Word", "LibreOffice Writer", "Notepad++", "Bloc-notes"],
+    "tableur": ["Excel", "LibreOffice Calc"],
+    "présentation": ["PowerPoint", "LibreOffice Impress"],
+    "code": ["Visual Studio Code", "IntelliJ IDEA", "PyCharm", "Visual Studio"],
+    "vidéo": ["VLC", "Netflix", "Films et TV"],
+    "jeux": ["Steam", "Epic Games Launcher", "Riot Client", "Battle.net", "Xbox"],
+}
+
+
+def _applis_installees(fraiches=False):
+    """Les applications du menu Démarrer (celles du Microsoft Store comprises) : nom -> identifiant de lancement."""
+    global _applis_lues
+    age = time.monotonic() - _applis_lues
+    if _applis_windows and age < (60 if fraiches else 900):
+        return _applis_windows
+    try:
+        sortie = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+             "Get-StartApps | ForEach-Object { $_.Name + \"`t\" + $_.AppID }"],
+            capture_output=True, text=True, encoding="utf-8", timeout=20,
+            creationflags=subprocess.CREATE_NO_WINDOW).stdout
+    except (OSError, subprocess.SubprocessError):
+        return _applis_windows
+    _applis_windows.clear()
+    for ligne in sortie.splitlines():
+        nom, _, identifiant = ligne.partition("\t")
+        nom = " ".join(nom.replace("​", "").split())      # certains noms cachent des espaces spéciaux
+        if nom and identifiant.strip():
+            _applis_windows.setdefault(nom, identifiant.strip())
+    _applis_lues = time.monotonic()
+    return _applis_windows
+
+
+def _installe(cmd):
+    """Le programme d'une ligne de config.yaml existe-t-il sur ce PC ?"""
+    exe = os.path.expandvars(os.path.expanduser(cmd)).partition(" --")[0].strip()
+    return "://" in cmd or os.path.exists(exe) or bool(shutil.which(exe))
+
+
+def trouver_application(nom):
+    """Le nom exact d'une application qu'on sait lancer ici, ou None. Sert aux ordres directs :
+    on ne redemande rien à Windows (la liste déjà lue suffit) et on ne devine pas."""
+    applis = {a: c for a, c in CONFIG.get("applications", {}).items() if _installe(c)}
+    return _meilleur(nom, applis, 0.85) or _meilleur(nom, _applis_windows, 0.85)
+
+
 def ouvrir_application(nom):
+    # le seuil est plus strict que pour les jeux : mieux vaut « introuvable » que lancer une autre appli
     applis = CONFIG.get("applications", {})
-    trouve = _meilleur(nom, applis)
+    trouve = _meilleur(nom, applis, 0.75)
     if trouve:
-        _lancer(applis[trouve])
+        try:
+            _lancer(applis[trouve])
+            return f"{trouve} ouvert."
+        except OSError:
+            pass                     # réglée dans config.yaml mais pas installée ici : on cherche dans Windows
+    installees = _applis_installees()
+    trouve = _meilleur(nom, installees, 0.75)
+    if not trouve:                   # peut-être installée à l'instant : on relit la liste de Windows
+        installees = _applis_installees(fraiches=True)
+        trouve = _meilleur(nom, installees, 0.75)
+    if trouve:
+        subprocess.Popen(["explorer.exe", "shell:AppsFolder\\" + installees[trouve]])
         return f"{trouve} ouvert."
     try:
         os.startfile(nom)
         return f"{nom} ouvert."
     except OSError:
-        return f"Application « {nom} » inconnue. Ajoute-la dans config.yaml."
+        proches = difflib.get_close_matches(nom.lower(), [n.lower() for n in installees], n=3, cutoff=0.5)
+        proches = [n for n in installees if n.lower() in proches]
+        suite = f" Installées qui y ressemblent : {', '.join(proches)}." if proches else ""
+        return f"Application « {nom} » introuvable sur ce PC. Rien n'a été lancé.{suite}"
+
+
+def applis_par_usage():
+    """Parmi les applications connues pour chaque usage, celles qui sont vraiment installées ici."""
+    installees = list(_applis_installees())
+    resultat = {}
+    for usage, connues in USAGES.items():
+        presentes = []
+        for connue in connues:
+            trouvees = [n for n in installees if connue.lower() in n.lower()]
+            if trouvees:
+                presentes.append(min(trouvees, key=len))
+        if presentes:
+            resultat[usage] = list(dict.fromkeys(presentes))
+    return resultat
+
+
+def contexte_applis():
+    """Ce que l'IA doit savoir des applications de ce PC (ajouté à ses consignes)."""
+    usages = applis_par_usage()
+    if not usages:
+        return ""
+    lignes = "\n".join(f"  {usage} : {', '.join(noms)}" for usage, noms in usages.items())
+    return ("\n\nApplications installées sur ce PC, par usage. Pour ces usages, n'ouvre et ne propose que celles-ci "
+            "(ou celle que l'utilisateur nomme) : les autres ne sont pas installées.\n" + lignes)
 
 
 # ------------------------------------------------------------------ Fichiers
@@ -299,6 +402,57 @@ def lire_fichier(chemin):
     return f"(Fichier : {p})\n" + texte[:4000] + ("\n[… suite coupée]" if len(texte) > 4000 else "")
 
 
+RESUMABLES = {".pdf", ".docx", ".txt", ".md", ".log", ".csv", ".rtf", ".html", ".htm", ".json", ".xml", ".py", ".js"}
+
+
+def texte_document(chemin, limite=12000):
+    """Le texte d'un PDF, d'un Word (.docx) ou d'un fichier texte, lu en local : (texte, ce qui n'a pas été lu).
+    Ne lit que le début s'il est long (la mémoire de l'IA est limitée). Lève ValueError avec une explication."""
+    p = _fichier(chemin)
+    if not p.is_file():
+        raise ValueError(f"Introuvable : {p}")
+    ext, reste = p.suffix.lower(), ""
+    if ext == ".pdf":
+        try:
+            from pypdf import PdfReader
+            lecteur = PdfReader(str(p))
+            if lecteur.is_encrypted:
+                lecteur.decrypt("")
+            pages = lecteur.pages
+            total = len(pages)
+        except Exception:
+            raise ValueError("Je n'arrive pas à ouvrir ce PDF (protégé par un mot de passe ou abîmé).")
+        morceaux, lues = [], 0
+        for page in pages:
+            morceaux.append(page.extract_text() or "")
+            lues += 1
+            if sum(len(m) for m in morceaux) > limite:
+                break
+        texte = " ".join(" ".join(morceaux).split())
+        if lues < total:
+            reste = f"Résumé du début seulement : {lues} pages lues sur {total}."
+    else:
+        if ext == ".docx":
+            import zipfile
+            try:
+                with zipfile.ZipFile(p) as z:
+                    xml = z.read("word/document.xml").decode("utf-8", "ignore")
+            except Exception:
+                raise ValueError("Je n'arrive pas à ouvrir ce document Word.")
+            brut = re.sub(r"<[^>]+>", "", xml.replace("</w:p>", " ")).encode("utf-8")
+        else:
+            with open(p, "rb") as f:
+                brut = f.read(limite * 4)
+            if b"\x00" in brut[:2000]:
+                raise ValueError("C'est un fichier binaire, je ne peux pas le lire.")
+        texte = " ".join(brut.decode("utf-8", errors="ignore").split())
+    if len(texte) < 20:
+        raise ValueError("Je ne trouve pas de texte dans ce fichier (un scan ? Je ne lis pas les images).")
+    if len(texte) > limite:
+        texte, reste = texte[:limite], reste or "Résumé du début seulement (document long)."
+    return texte, reste
+
+
 def lister_dossier(dossier):
     d = _chemin(dossier)
     if not d.is_dir():
@@ -379,32 +533,8 @@ def analyser_espace():
 
 # ------------------------------------------------------------------ Mails
 
-def _texte_mail(msg):
-    for part in msg.walk() if msg.is_multipart() else [msg]:
-        if part.get_content_type() == "text/plain":
-            data = part.get_payload(decode=True) or b""
-            return data.decode(part.get_content_charset() or "utf-8", errors="ignore")
-    return ""
-
-
-def mails_recents(nombre=5):
-    cfg = CONFIG.get("email", {})
-    if not cfg.get("adresse") or not cfg.get("mot_de_passe_app"):
-        return "Mail non configuré : remplis la section email de config.yaml."
-    nombre = max(1, min(int(nombre), 15))
-    sortie = []
-    with imaplib.IMAP4_SSL(cfg["serveur_imap"]) as m:
-        m.login(cfg["adresse"], cfg["mot_de_passe_app"])
-        m.select("INBOX", readonly=True)
-        _, data = m.search(None, "ALL")
-        for num in reversed(data[0].split()[-nombre:]):
-            _, contenu = m.fetch(num, "(BODY.PEEK[])")
-            msg = email.message_from_bytes(contenu[0][1])
-            de = str(make_header(decode_header(msg.get("From", ""))))
-            sujet = str(make_header(decode_header(msg.get("Subject", ""))))
-            corps = " ".join(_texte_mail(msg).split())[:400]
-            sortie.append(f"De : {de}\nSujet : {sujet}\nDate : {msg.get('Date', '')}\nExtrait : {corps}")
-    return "\n\n".join(sortie) or "Boîte vide."
+def mails_recents(nombre=5, importants=False):
+    return messagerie.recents(nombre, str(importants).lower() in ("true", "1", "oui"))
 
 
 # ------------------------------------------------------------------ Divers
@@ -430,8 +560,46 @@ def musique_en_cours():
     return musique.en_cours_texte()
 
 
+JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+        "novembre", "décembre"]
+
+
 def date_heure():
-    return datetime.datetime.now().strftime("%A %d %B %Y, %H:%M")
+    m = datetime.datetime.now()
+    jour = "1er" if m.day == 1 else str(m.day)
+    return f"Il est {m:%H}h{m:%M}, {JOURS[m.weekday()]} {jour} {MOIS[m.month - 1]} {m.year}."
+
+
+def prechauffer():
+    """Au lancement, dans un fil de fond : ce qui est lent la première fois (liste des applications, son)."""
+    global USAGES_ICI
+    try:
+        USAGES_ICI = applis_par_usage()
+        reglages.volume("")
+    except Exception:
+        pass
+
+
+def regler_pc(reglage, valeur=""):
+    return reglages.regler(reglage, valeur)
+
+
+def creer_rappel(quand, texte=""):
+    return rappels.creer(quand, texte)
+
+
+def lister_rappels():
+    return rappels.lister()
+
+
+def supprimer_rappels(genre=""):
+    genre = genre if genre in ("rappel", "minuteur") else None
+    nombre = rappels.supprimer(genre)
+    if not nombre:
+        return "Il n'y avait rien à supprimer."
+    pluriel = "s" if nombre > 1 else ""
+    return f"{nombre} {genre or 'élément'}{pluriel} supprimé{pluriel}."
 
 
 # ------------------------------------------------------------------ Déclaration pour l'IA
@@ -443,6 +611,7 @@ FONCTIONS = {f.__name__: f for f in [
     lister_dossier, ranger_telechargements, chercher_fichier, ouvrir_fichier,
     ranger_dossier, annuler_rangement, analyser_espace, mails_recents, date_heure,
     se_renseigner, memoriser, controler_musique, musique_en_cours,
+    regler_pc, creer_rappel, lister_rappels, supprimer_rappels,
 ]}
 
 
@@ -474,8 +643,9 @@ def schemas():
                {"information": _texte("L'information à retenir, en une phrase")}, ["information"]),
         _outil("lister_jeux", "Liste les jeux installés."),
         _outil("lancer_jeu", "Lance un jeu installé.", {"nom": _texte("Nom du jeu")}, ["nom"]),
-        _outil("ouvrir_application", "Ouvre une application (Discord, Spotify…).",
-               {"nom": _texte("Nom de l'application")}, ["nom"]),
+        _outil("ouvrir_application", "Ouvre une application installée sur le PC, par son nom exact tel que "
+               "l'utilisateur l'a dit (Discord, Apple Music, Excel…).",
+               {"nom": _texte("Nom de l'application demandée, sans le remplacer par une autre")}, ["nom"]),
         _outil("ranger_fichier", "Range un fichier à sa place : dossier du TYPE (PDF, Word, Images…) puis de la SOURCE "
                "(site ou appli d'où il vient). Le dossier est choisi automatiquement.",
                {"chemin": _texte("Chemin complet du fichier")}, ["chemin"]),
@@ -500,13 +670,26 @@ def schemas():
                {"nom": _texte("Partie du nom du fichier")}, ["nom"]),
         _outil("ouvrir_fichier", "Ouvre un fichier avec son application par défaut.",
                {"chemin": _texte("Chemin complet")}, ["chemin"]),
-        _outil("mails_recents", "Récupère les derniers mails reçus pour les résumer.",
-               {"nombre": {"type": "integer", "description": "Nombre de mails (défaut 5)"}}),
+        _outil("mails_recents", "Récupère les derniers mails reçus pour les résumer. Avec importants=true : seulement "
+               "ceux qui comptent (non lus écrits par une personne, sécurité, factures, livraisons…), sans les publicités.",
+               {"nombre": {"type": "integer", "description": "Nombre de mails (défaut 5)"},
+                "importants": {"type": "boolean", "description": "true = seulement les mails importants"}}),
         _outil("date_heure", "Donne la date et l'heure actuelles."),
         _outil("controler_musique", "Contrôle la musique en cours (Apple Music, Spotify…).",
                {"action": {"type": "string", "enum": ["pause", "lecture", "suivant", "precedent"]}}, ["action"]),
         _outil("musique_en_cours", "Dit quelle musique joue en ce moment."),
         _outil("annuler_rangement", "Remet le dernier fichier rangé ou déplacé à son ancienne place."),
+        _outil("regler_pc", "Règle le PC : volume, luminosité, verrouiller la session, éteindre l'écran, "
+               "ou ouvrir une page des Paramètres Windows (Wi-Fi, Bluetooth, son, affichage, notifications…).",
+               {"reglage": {"type": "string", "enum": ["volume", "luminosite", "verrouiller", "ecran", "parametres"]},
+                "valeur": _texte("volume/luminosite : « 30 », « +10 », « -10 » (volume aussi : « muet », « son ») ; "
+                                 "parametres : nom de la page, ex « wifi » ; sinon vide")}, ["reglage"]),
+        _outil("creer_rappel", "Crée un rappel qui s'affichera sur la goutte au moment voulu.",
+               {"quand": _texte("« dans 20 minutes », « à 15h30 » ou « demain à 9h »"),
+                "texte": _texte("Ce qu'il faut rappeler, ex : Appeler Paul")}, ["quand", "texte"]),
+        _outil("lister_rappels", "Liste les rappels et minuteurs en cours."),
+        _outil("supprimer_rappels", "Supprime les rappels et/ou les minuteurs en cours.",
+               {"genre": {"type": "string", "enum": ["rappel", "minuteur", ""], "description": "vide = tout"}}),
         _outil("analyser_espace", "Analyse le disque pour faire de la place (fichiers temporaires, vieux installateurs, "
                "doublons, gros fichiers oubliés). Ne supprime rien : l'utilisateur choisit ensuite."),
     ]

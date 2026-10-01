@@ -1,11 +1,15 @@
 PySide6>=6.8
-ollama>=0.4
 pyyaml
 send2trash
 faster-whisper
 sounddevice
 numpy
 pypdf
+comtypes
+pycaw
+winrt-Windows.Media.Ocr
+winrt-Windows.Graphics.Imaging
+winrt-Windows.Globalization
 winrt-runtime
 winrt-Windows.Media.Control
 winrt-Windows.Storage.Streams

@@ -45,14 +45,14 @@ def creer_raccourci(lnk, cible, arguments="", dossier="", icone=""):
     script = (f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');"
               f"$s.TargetPath = '{cible}'; $s.Arguments = '{arguments}';"
               f"$s.WorkingDirectory = '{dossier}'; $s.IconLocation = '{icone or cible}';"
-              f"$s.Description = 'Assistant Island'; $s.Save()")
+              f"$s.Description = 'Dropi'; $s.Save()")
     subprocess.run(["powershell", "-NoProfile", "-Command", script], check=True)
     print(f"Raccourci créé : {lnk}")
 
 
 def raccourci_script():
     pythonw = Path(sys.executable).with_name("pythonw.exe")
-    creer_raccourci(Path(dossier_windows("Desktop")) / "Assistant.lnk", pythonw, f'"{DOSSIER / "island.py"}"',
+    creer_raccourci(Path(dossier_windows("Desktop")) / "Dropi.lnk", pythonw, f'"{DOSSIER / "island.py"}"',
                     DOSSIER, DOSSIER / "logo.ico")
 
 

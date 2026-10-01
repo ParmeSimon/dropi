@@ -1,4 +1,4 @@
-"""Lancer l'assistant au démarrage de Windows (clé « Run » de ton compte, sans droits administrateur)."""
+"""Lancer Dropi au démarrage de Windows (clé « Run » de ton compte, sans droits administrateur)."""
 import sys
 import winreg
 from pathlib import Path
@@ -6,11 +6,12 @@ from pathlib import Path
 import donnees
 
 CLE = r"Software\Microsoft\Windows\CurrentVersion\Run"
-NOM = "AssistantIsland"
+NOM = "Dropi"
+ANCIEN_NOM = "AssistantIsland"          # le nom avant « Dropi » : on le retire pour ne pas lancer deux fois
 
 
 def commande():
-    """Ce que Windows lance : Assistant.exe, ou le script avec pythonw (sans fenêtre noire)."""
+    """Ce que Windows lance : Dropi.exe, ou le script avec pythonw (sans fenêtre noire)."""
     if donnees.FIGE:
         return f'"{sys.executable}"'
     pythonw = Path(sys.executable).with_name("pythonw.exe")
@@ -26,14 +27,20 @@ def est_active():
         return False
 
 
+def _retirer(nom):
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CLE, 0, winreg.KEY_SET_VALUE) as cle:
+            winreg.DeleteValue(cle, nom)
+    except OSError:
+        pass
+
+
 def activer(cmd=None):
+    _retirer(ANCIEN_NOM)
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CLE, 0, winreg.KEY_SET_VALUE) as cle:
         winreg.SetValueEx(cle, NOM, 0, winreg.REG_SZ, cmd or commande())
 
 
 def desactiver():
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CLE, 0, winreg.KEY_SET_VALUE) as cle:
-            winreg.DeleteValue(cle, NOM)
-    except OSError:
-        pass
+    _retirer(ANCIEN_NOM)
+    _retirer(NOM)

@@ -1,6 +1,6 @@
 """Où l'assistant garde ses propres fichiers (journal des rangements, mémoire, erreurs).
 
-Dans %APPDATA%\\AssistantIle : c'est le même dossier que tu lances le script ou Assistant.exe,
+Dans %APPDATA%\\AssistantIle : c'est le même dossier que tu lances le script ou Dropi.exe,
 et il survit aux mises à jour de l'appli.
 """
 import os
@@ -11,7 +11,7 @@ from pathlib import Path
 DONNEES = Path(os.environ.get("APPDATA") or Path.home()) / "AssistantIle"
 DONNEES.mkdir(parents=True, exist_ok=True)
 
-FIGE = getattr(sys, "frozen", False)          # vrai quand on tourne depuis Assistant.exe
+FIGE = getattr(sys, "frozen", False)          # vrai quand on tourne depuis Dropi.exe
 DOSSIER_PROGRAMME = Path(sys.executable).parent if FIGE else Path(__file__).resolve().parent
 
 

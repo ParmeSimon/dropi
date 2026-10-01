@@ -2,10 +2,24 @@
 #  Configuration de ton assistant — modifie ce fichier librement
 # ============================================================
 
-# Modèle IA local (Ollama). qwen3:8b = bon choix pour 8 Go de VRAM.
-# 12 Go et plus : qwen3:14b   |   moins de 8 Go : qwen3:4b
-modele: qwen3:8b
-ollama_url: http://localhost:11434
+# ---------- IA locale ----------
+# Le moteur (llama.cpp) est livré avec l'appli : rien d'autre à installer. Au premier lancement, le modèle
+# (Qwen3 8B, ~5 Go) est téléchargé une seule fois ; si Ollama l'a déjà sur ce PC, il est réutilisé.
+# modele_fichier: D:/modeles/mon-modele.gguf   # pour utiliser un autre fichier .gguf
+# modele_url: https://...                      # ou un autre lien de téléchargement
+# Le modèle « réfléchit » avant de répondre : mieux sur les questions difficiles, mais bien plus lent.
+reflexion: false
+# Carte graphique : auto = le modèle y va si elle est libre, sinon (jeu, vidéo…) il reste sur le processeur ;
+#                   non = toujours le processeur ; oui = toujours la carte (même occupée).
+ia_gpu: auto
+# Combien de temps le modèle reste en mémoire (≈ 6 Go) après ta dernière demande. Ensuite il est déchargé
+# pour rendre la RAM au PC, et revient tout seul à la demande suivante (quelques secondes, pas de minutes).
+garder_en_memoire: 15m
+# Au lancement, charger le modèle en avance : la première demande est rapide.
+prechauffer_ia: true
+# Réglages avancés (laisse vide : c'est calculé pour ton PC)
+# ia_threads: 3        # cœurs du processeur utilisés (par défaut : tous sauf un)
+# ia_contexte: 6144    # taille de la mémoire de conversation (plus grand = plus de RAM)
 
 # Reconnaissance vocale (Whisper) : tiny, base, small, medium
 whisper_modele: small
@@ -34,11 +48,13 @@ classement:
 
 # ---------- Téléchargements ----------
 # Quand un téléchargement se termine, la goutte te propose où le ranger.
-#   proposer : elle te montre l'endroit, tu cliques pour ranger
-#   auto     : elle le range toute seule (au bout de 20 secondes, le temps que tu l'ouvres si besoin)
+#   auto     : Dropi range chaque fichier tout seul, un par un, 10 secondes après la fin du téléchargement
+#              (dossier du TYPE puis de la SOURCE, voir « Rangement méthodique » ; « annule » remet tout en place)
+#   ouvrir   : le panneau s'ouvre tout seul avec le fichier (Résumer, Ranger ici, Ouvrir…), sans voler le clavier
+#   proposer : elle te montre l'endroit sur la goutte, tu cliques pour ouvrir le panneau
 #   rien     : elle ne surveille pas
 telechargements:
-  mode: proposer
+  mode: auto
   dossier: ~/Downloads
 
 # ---------- Comportement ----------
@@ -52,6 +68,18 @@ musique:
   afficher: true
   # applis suivies : ajoute chrome, msedge ou brave pour YouTube… ou mets [toutes]
   applis: [AppleMusic, iTunes, Spotify]
+
+# ---------- Mots de passe ----------
+# Quand tu cliques dans un champ « mot de passe » de ton navigateur, la goutte te propose de le remplir
+# (site déjà connu) ou d'en enregistrer un (elle te propose un mot de passe robuste).
+# Ils sont gardés, chiffrés, dans le Gestionnaire d'identifiants de Windows : jamais dans un fichier, jamais vus par l'IA.
+mots_de_passe:
+  activer: true
+  navigateurs: [chrome, brave, msedge]
+  longueur: 20          # taille des mots de passe proposés
+  # Avec l'extension (dossier extension/, voir LISEZMOI) : quand tu te connectes à un site,
+  # l'identifiant et le mot de passe sont retenus tout seuls. false = seulement quand tu le demandes.
+  capture: true
 
 # ---------- Twitch ----------
 # surnom -> nom de la chaîne Twitch (ce qui suit twitch.tv/)
@@ -68,7 +96,9 @@ sites:
   netflix: https://www.netflix.com
 
 # ---------- Applications ----------
-# nom -> chemin de l'exécutable (les jeux Steam sont détectés tout seuls)
+# Les applications installées (menu Démarrer, Microsoft Store) sont trouvées toutes seules, comme les jeux Steam.
+# Cette liste sert seulement aux surnoms et aux cas particuliers : nom -> chemin de l'exécutable.
+# Une ligne dont le programme n'est pas installé sur ce PC est ignorée.
 applications:
   discord: "%LOCALAPPDATA%/Discord/Update.exe --processStart Discord.exe"
   spotify: "%APPDATA%/Spotify/Spotify.exe"
@@ -86,9 +116,8 @@ jeux:
 steam_dossiers: []
 
 # ---------- Mails ----------
-# Gmail : active la validation en 2 étapes, puis crée un
-# "mot de passe d'application" sur myaccount.google.com/apppasswords
-# Outlook/Hotmail : serveur outlook.office365.com
+# Plus besoin de cette section : connecte ta messagerie depuis la goutte (tuile « Connecter mes mails »),
+# le mot de passe va dans le coffre de Windows au lieu de ce fichier. Elle reste lue si elle est remplie.
 email:
   serveur_imap: imap.gmail.com
   adresse: ""

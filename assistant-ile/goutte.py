@@ -8,7 +8,8 @@ import math
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QPainterPath, QTransform
 
-RUPTURE = 95      # écart au bord (px) où le col casse quand on tire la bulle
+RUPTURE = 95      # écart au bord (px) où le col serait étiré au maximum (un fil : c'est l'échelle de la tension)
+CASSE = 58        # écart où il casse vraiment, bien avant : tant qu'il est encore épais (un fil fin et long est laid)
 ACCROCHE = 30     # écart où une goutte libre se fait « aspirer » par le bord
 
 
