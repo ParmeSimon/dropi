@@ -43,6 +43,7 @@ import rappels
 import messagerie
 import ocr
 import convertir
+import pressepapier
 import miseajour
 from version import VERSION
 import partie
@@ -575,7 +576,7 @@ class Ile(QWidget):
         self.champ_passe.textEdited.connect(self._frappe)
         autre = ui.Bouton("regenerer", info="Un autre mot de passe")
         autre.clicked.connect(lambda: self.champ_passe.setText(coffre.generer(self._longueur_mdp)))
-        copier = ui.Bouton("copier", info="Copier (effacé du presse-papiers au bout de 30 secondes)")
+        copier = ui.Bouton("copier", info="Copier (effacé du presse-papiers juste après le collage)")
         copier.clicked.connect(self._copier_cle)
         ligne.addWidget(self.champ_passe, 1)
         ligne.addWidget(autre)
@@ -2033,13 +2034,7 @@ class Ile(QWidget):
         mdp = self.champ_passe.text()
         if not mdp:
             return
-        contenu = QMimeData()
-        contenu.setText(mdp)
-        # demande à Windows de ne pas le garder dans l'historique du presse-papiers (Win + V) ni de le synchroniser
-        contenu.setData('application/x-qt-windows-mime;value="ExcludeClipboardContentFromMonitorProcessing"', b"\x01")
-        presse_papiers = QApplication.clipboard()
-        presse_papiers.setMimeData(contenu)
-        QTimer.singleShot(30000, lambda: presse_papiers.text() == mdp and presse_papiers.clear())
+        pressepapier.copier_secret(mdp)       # effacé juste après le collage, hors historique Win + V
         self.mascotte.sauter(0.4)
 
     @staticmethod
