@@ -1696,6 +1696,8 @@ class Ile(QWidget):
 
     def _fin_directe(self, resume, resultats, demande, fichiers):
         self.occupee = False
+        if self.tableau is not None and self.tableau.isVisible():
+            self.tableau.inventorier(force=True)
         self.cerveau.noter(demande, "\n".join(resultats))
         erreurs = [r for r in resultats if est_erreur(r)]
         for i, (r, c) in enumerate(zip(resultats, fichiers)):
@@ -1785,7 +1787,7 @@ class Ile(QWidget):
     def _creer_tableau(self):
         import tableau as module_tableau
         import transition as module_transition
-        self.tableau = module_tableau.Tableau(self.mascotte)
+        self.tableau = module_tableau.Tableau(self.mascotte, self.ecran.geometry().height())
         self.tableau.reduire.connect(self._fermer_tableau)
         self.tableau.jeu.connect(self._lancer_jeu)
         self.tableau.demande.connect(self._demande_tableau)
@@ -1795,6 +1797,12 @@ class Ile(QWidget):
         self.tableau.chat.nouvelle.connect(self._reset)
         self.tableau.chat.micro.pressed.connect(self._micro_debut)
         self.tableau.chat.micro.released.connect(self._micro_fin)
+        self.tableau.coin.b_micro.pressed.connect(self._micro_debut)
+        self.tableau.coin.b_micro.released.connect(self._micro_fin)
+        self.tableau.coin.interaction.connect(self._reaction_tableau)
+        self.tableau.action.connect(self._action_tableau)
+        self.tableau.ranger_pc.connect(self._reorganiser)
+        self.tableau.fichiers_deposes.connect(self._deposes_sur_dropi)
         self.transition = module_transition.Transition(self.mascotte)
 
     def _ouvrir_tableau(self):
@@ -1835,7 +1843,7 @@ class Ile(QWidget):
             self.update()
             self._maj_visibilite()                # en plein écran, plus de goutte en haut : Dropi est dans le tableau de bord
 
-        self.transition.jouer(zone, depart, plop, True, plein, fin, photo)
+        self.transition.jouer(zone, depart, plop, True, plein, fin, photo, self.tableau.coin.rayon)
 
     def _fermer_tableau(self):
         """La pastille du haut : le tableau de bord se referme dans la goutte."""
@@ -1861,7 +1869,7 @@ class Ile(QWidget):
             self.mascotte.sauter(0.6)
             self.update()
 
-        self.transition.jouer(zone, arrivee, plop, False, plein, fin, photo)
+        self.transition.jouer(zone, arrivee, plop, False, plein, fin, photo, self.tableau.coin.rayon)
 
     def _basculer_tableau(self):
         """Le raccourci clavier : ouvre le tableau de bord, le ramène devant, ou le réduit s'il est déjà devant."""
@@ -1874,6 +1882,35 @@ class Ile(QWidget):
         """Une phrase tapée dans la recherche ou le tchat du tableau de bord : Dropi répond dans le tchat."""
         self.tableau.ouvrir_chat()
         self.envoyer(texte)
+
+    def _reaction_tableau(self, quoi):
+        """Dropi réagit à ce qu'on lui fait dans le tableau de bord."""
+        if quoi == "survol":
+            self.mascotte.reveiller()
+            self.mascotte.reagir("curieux", 1.4)
+        elif quoi == "clic":
+            self.mascotte.reagir("content", 0.9)
+        elif quoi == "double":
+            self.mascotte.reagir("eureka", 1.2)
+        elif quoi == "depot_survol":
+            self.mascotte.reagir("miam", 2.0)
+
+    def _action_tableau(self, quoi):
+        if quoi == "jouer":
+            self._jeux()
+        elif quoi == "nouvelle":
+            self._reset()
+        elif quoi == "capture":
+            self._capturer_texte()
+
+    def _deposes_sur_dropi(self, chemins):
+        """Des fichiers lâchés sur Dropi dans le tableau de bord : il les range tout de suite, un par un."""
+        fichiers = [c for c in chemins if os.path.isfile(c)]
+        if not fichiers or self.occupee:
+            return
+        self.fichiers = fichiers
+        self.mascotte.reagir("miam", 1.6)
+        self._action_directe("ranger")
 
     def _tableau_devant(self):
         """Le tableau de bord est-il affiché ET au premier plan (aucune autre appli par-dessus) ?"""
@@ -2375,18 +2412,25 @@ class Ile(QWidget):
         if self.mode == "repos" and not self.occupee:
             self._toast(f"{nom}  →  {lieu}", "succes")
 
-    def _reorganiser(self):
-        """« Réorganise mon classement » : calcule le plan, le montre, et ne déplace rien sans ton clic."""
+    def _reorganiser(self, chemins=None):
+        """« Range mon PC » / « Réorganise mon classement » : calcule le plan, le montre, et ne déplace rien sans ton clic.
+        chemins : les fichiers en vrac trouvés par l'inventaire ; sinon on le refait ici."""
         if self.occupee:
             return
-        self.fil.moi("Réorganise mon classement")
+        if self.tableau is not None and self.tableau.isVisible():
+            self.tableau.ouvrir_chat()
+        self.fil.moi("Range mon PC")
         self._maj_accueil()
         self.occupee = True
-        self._statut("Je regarde ton classement…", "travail")
+        self._statut("Je regarde ce qui traîne…", "travail")
 
         def travail():
             try:
-                self.pont.plan.emit(classement.plan_reorganisation())
+                liste = chemins
+                if not liste:
+                    import inventaire
+                    liste = [f["chemin"] for f in inventaire.faire()["fichiers"] if f["vrac"]]
+                self.pont.plan.emit(classement.plan_fichiers(liste))
             except Exception as ex:
                 self.pont.plan.emit(str(ex))
 
@@ -2400,14 +2444,15 @@ class Ile(QWidget):
             return
         a_deplacer = [(p, d, e) for p, d, e in plan if Path(p).parent != d]
         if not a_deplacer:
-            self.fil.ia("Ton classement est déjà bien rangé : rien à déplacer.")
+            self.fil.ia("Rien ne traîne : tout est déjà rangé.")
             self._maj_accueil()
             return
         par_lieu = {}
         for _, _, etiquette in a_deplacer:
             par_lieu[etiquette] = par_lieu.get(etiquette, 0) + 1
         lignes = [f"- **{lieu}** : {n}" for lieu, n in sorted(par_lieu.items(), key=lambda x: -x[1])]
-        self.fil.ia(f"**{len(a_deplacer)} fichiers** de ton ancien classement iraient dans les nouveaux thèmes :\n\n"
+        self.fil.ia(f"**{len(a_deplacer)} fichiers** traînent sur ton PC (Téléchargements, Bureau, ancien classement…). "
+                    "Voilà où je les rangerais :\n\n"
                     + "\n".join(lignes[:12]) + (f"\n- … et {len(lignes) - 12} autres" if len(lignes) > 12 else "")
                     + "\n\nRien n'a bougé. Clique ci-dessous pour appliquer (« annule » défait le dernier déplacement).")
         self.fil.action(f"Appliquer : déplacer {len(a_deplacer)} fichiers", lambda: self._appliquer_plan(a_deplacer))
@@ -2432,6 +2477,9 @@ class Ile(QWidget):
         self.fil.action(f"{faits} fichiers rangés" + (f" (problèmes : {erreurs})" if erreurs else "")).terminer(not erreurs)
         self._toast(f"{faits} fichiers rangés par thème", "erreur" if erreurs else "succes")
         self._maj_accueil()
+        if self.tableau is not None:
+            self.tableau.inventorier(force=True)       # les compteurs du tableau de bord se remettent à jour
+            self.tableau.montrer_accueil() if self.tableau.pile.currentIndex() == 0 else self.tableau.gestionnaire.rafraichir()
 
     def _maj_dispo(self, info):
         """Le veilleur a trouvé une version plus récente : on prévient, sans rien lancer."""

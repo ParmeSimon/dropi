@@ -70,7 +70,8 @@ MOTIFS = [
     (r"range (?:mon |le )?bureau", lambda m: _outil("ranger_dossier", dossier="~/Desktop")),
     (r"annule(?: (?:ca|le rangement|le dernier rangement))?", lambda m: _outil("annuler_rangement")),
     (r"(?:re)?(?:organise|classe)(?: moi)? (?:tout )?(?:mon|mes|le|les) (?:ancien )?(?:classement|dossiers|fichiers|documents)(?: par theme)?|range(?: moi)? (?:mon|le) classement"
-     r"|(?:re)?organise tout|nouveau classement|passe(?: mon classement)? en theme", lambda m: ("ile", "_reorganiser")),
+     r"|(?:re)?organise tout|nouveau classement|passe(?: mon classement)? en theme"
+     r"|range(?: moi)? (?:tout|mon pc|mon ordi|mon ordinateur|tout mon pc|ce qui traine)|fais le rangement|range tout ce qui traine", lambda m: ("ile", "_reorganiser")),
     (r"fais(?: moi)? de la place|libere de la place|nettoie (?:mon |le )?(?:disque|pc)", lambda m: ("ile", "_faire_de_la_place")),
     # ---- tableau de bord (Dropi en plein écran)
     (r"(?:ouvre|affiche|montre(?: moi)?|lance|mets?|passe en|va sur)? ?(?:le |mon |en |au )?(?:tableau de bord|dashboard|plein ecran|mode bureau|grand ecran)"

@@ -65,7 +65,7 @@ REGLES = [
     ("01 Études", "TP et projets", ["tp", "projet", "dossier de modelisation", "dossier projet", "rapport de stage", "memoire", "soutenance",
                                     "compte rendu de tp", "uml", "sae", "cahier des charges", "specification", "diagramme", "livrable",
                                     "rapport de projet", "dossier technique"], []),
-    ("01 Études", "Cours", ["cours", "chapitre", "td", "cm", "support de cours", "lecon", "resume de cours", "fiche de revision",
+    ("01 Études", "Cours", ["cours", "chapitre", "td", "cm", "ecole", "universite", "lycee", "iut", "semestre", "support de cours", "lecon", "resume de cours", "fiche de revision",
                             "polycopie", "moodle", "slides", "notes de cours", "revision", "exercices", "corrige"], ["Moodle", "Pronote", "École Directe"]),
     ("01 Études", "Administratif école", ["inscription", "certificat de scolarite", "carte etudiante", "emploi du temps", "convention de stage",
                                           "reglement interieur", "bourse", "crous", "campus", "scolarite", "etudiant"], ["École Directe"]),

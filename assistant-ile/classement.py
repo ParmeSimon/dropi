@@ -525,6 +525,17 @@ def plan_reorganisation(dossiers=None):
     return plan
 
 
+def plan_fichiers(chemins):
+    """Le plan de rangement pour une liste de fichiers précise (ceux que l'inventaire a trouvés « en vrac »)."""
+    plan = []
+    for chemin in chemins:
+        p = Path(chemin)
+        if p.is_file() and not est_partiel(p):
+            resultat, _, _ = classer(p)
+            plan.append((p, themes.dossier(racine(), resultat, _date(p)), themes.nom_affiche(resultat)))
+    return plan
+
+
 def appliquer_plan(plan, sur_progres=None):
     """Déplace tout (sans rien écraser, avec le journal). Renvoie (déplacés, erreurs). Nettoie les dossiers vides."""
     faits, erreurs, dossiers = 0, [], set()
@@ -538,9 +549,10 @@ def appliquer_plan(plan, sur_progres=None):
             erreurs.append(f"{Path(p).name} : {ex}")
         if sur_progres and i % 20 == 0:
             sur_progres(i, len(plan))
-    proteges = {Path.home(), *(Path.home() / n for n in ("Documents", "Pictures", "Videos", "Music", "Downloads", "Desktop"))}
-    for d in sorted(dossiers, key=lambda x: len(x.parts), reverse=True):     # les dossiers devenus vides disparaissent
-        while d not in proteges and d.parent != d:
+    # Seuls les dossiers vides de l'ANCIEN classement disparaissent (Classement/PDF/Gmail…). Jamais Téléchargements,
+    # Bureau, Images… ni un dossier à toi, même vides : ils peuvent être redirigés (OneDrive) et Windows y tient.
+    for d in sorted(dossiers, key=lambda x: len(x.parts), reverse=True):
+        while "classement" in [m.lower() for m in d.parts]:
             try:
                 d.rmdir()
             except OSError:

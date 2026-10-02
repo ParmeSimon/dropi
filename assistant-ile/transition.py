@@ -66,6 +66,7 @@ class Transition(QWidget):
         self._t = 0.0                           # 0 = goutte à sa place, 1 = tableau de bord affiché
         self._goutte = self._plop = QPointF()
         self._image = None                      # la photo du tableau de bord (ou None : on dessine juste son fond)
+        self._r_plop = R_PLOP                   # la taille de Plop à l'arrivée (il est plus grand dans le tableau de bord)
         self._au_plein = self._a_la_fin = None
         self._plein_fait = False
         self._ouvre = True
@@ -77,7 +78,7 @@ class Transition(QWidget):
     def en_cours(self):
         return self._anim.state() == QVariantAnimation.Running
 
-    def jouer(self, zone, goutte, plop, ouvrir, au_plein, a_la_fin, image=None):
+    def jouer(self, zone, goutte, plop, ouvrir, au_plein, a_la_fin, image=None, rayon_plop=R_PLOP):
         """zone : le rectangle de l'écran ; goutte : le centre de la goutte ; plop : là où Plop se pose dans le tableau
         de bord (coordonnées de l'écran) ; image : la photo du tableau de bord. au_plein() est appelé quand le liquide
         couvre tout l'écran (c'est le moment d'afficher ou de cacher la vraie fenêtre, on ne voit rien) ; a_la_fin()
@@ -87,6 +88,7 @@ class Transition(QWidget):
         self._goutte = QPointF(goutte) - QPointF(zone.topLeft())
         self._plop = QPointF(plop) - QPointF(zone.topLeft())
         self._image = image
+        self._r_plop = rayon_plop
         self._ouvre, self._au_plein, self._a_la_fin, self._plein_fait = ouvrir, au_plein, a_la_fin, False
         self._t = 0.0 if ouvrir else 1.0
         self._anim.setDirection(QVariantAnimation.Forward if ouvrir else QVariantAnimation.Backward)
@@ -150,7 +152,7 @@ class Transition(QWidget):
             # Plop rejoint sa pastille, puis s'efface (il est déjà sur la photo du tableau de bord)
             c = QPointF(_melange(centre.x(), self._plop.x(), u), _melange(centre.y(), self._plop.y(), u))
             p.setOpacity(max(0.0, min(1.0, (0.86 - lineaire) / 0.22)))
-            self.mascotte.dessiner(p, c, R_PLOP, False)
+            self.mascotte.dessiner(p, c, _melange(R_PLOP, self._r_plop, u), False)
             p.setOpacity(1.0)
         else:                                                   # la vraie fenêtre est là : la photo s'efface
             u = (ms - VOL - SAUT - ETALER) / FONDU

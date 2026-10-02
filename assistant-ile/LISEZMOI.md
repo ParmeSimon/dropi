@@ -275,14 +275,22 @@ autre appli passe devant, ou pour ses panneaux (mots de passe, mini-jeux, fichie
 
 | Zone | Ce qu'elle fait |
 |---|---|
-| **Dropi** (en haut à gauche) | La mascotte et sa bulle ; un clic ouvre le tchat. |
+| **Dropi** (en haut à gauche, en grand) | Il te suit des yeux et réagit quand tu le survoles ou le chatouilles ; sa bulle dit ce qu'il fait. **Clic** : le tchat. **Double-clic** : on joue. **Clic droit** : tout ce qu'il sait faire d'ici. **Un fichier lâché sur lui** est rangé tout de suite. Sous la bulle : Discuter, micro (à maintenir), Jouer, Ranger mon PC. |
 | **Recherche** | Tape quelques lettres : applis, jeux et fichiers rangés. `Entrée` lance le premier résultat, les flèches choisissent. Rien ne correspond ? La phrase part chez Dropi. |
 | **Mes applis** | Tes applis épinglées (au premier lancement : ton navigateur, ta messagerie, ton éditeur…). « Ajouter » pour en épingler une, clic droit pour la retirer ou la mettre en premier. |
 | **Mes jeux** | Ta bibliothèque avec les jaquettes, un clic pour lancer. |
-| **Mes fichiers** | Les 8 thèmes avec leur nombre de fichiers (« À trier » passe en jaune s'il y a quelque chose) et les derniers fichiers rangés. |
-| **Fenêtres ouvertes** | Ce que montrait la barre des tâches : un clic met la fenêtre devant, la croix (ou clic du milieu) la ferme. |
+| **Mes fichiers** | Les 8 thèmes, avec ce qui y est rangé **et ce qui attend encore sur ton PC** (« 55 à ranger · 1106 dans tes dossiers »). **Ranger mon PC** prépare le rangement de tout ce qui traîne ; rien ne bouge avant ton accord. Dessous, les derniers fichiers rangés. |
+| **Fenêtres ouvertes** | La bande du bas, ce que montrait la barre des tâches : icône, titre et nom de l'appli. Un clic met la fenêtre devant, la croix (ou clic du milieu) la ferme. |
 
-**Le gestionnaire de fichiers** (clic sur un thème, ou « Tout voir ») : les thèmes à gauche, le contenu à droite,
+**Ce que Dropi regarde sur ton PC** : Téléchargements, Bureau, Documents, Images, Vidéos, Musique (y compris s'ils sont
+sur OneDrive). Les fichiers **en vrac** (posés directement dans ces dossiers, ou dans l'ancien `Classement`) peuvent être
+rangés d'un coup. Ceux qui sont **dans tes propres dossiers** (`ecole`, `Screenshots`…) sont montrés par thème mais Dropi
+ne les en sort jamais tout seul ; tu peux déplacer le dossier entier dans un thème. Les dossiers de code sont ignorés,
+et un dossier vidé n'est jamais supprimé (sauf ceux de l'ancien `Classement`).
+
+**Le gestionnaire de fichiers** (clic sur un thème, ou « Tout voir ») : deux vues, **Rangés** et **Sur mon PC, pas
+encore rangés**. À gauche : tes thèmes, **Ce PC** (le disque `C:` et les autres, clés USB comprises, avec l'espace
+libre) pour aller partout, et tes dossiers Windows (Téléchargements, Bureau…). Le contenu à droite,
 une recherche dans le dossier et ses sous-dossiers. Double-clic pour ouvrir, `Retour arrière` pour remonter,
 clic droit pour déplacer vers un autre thème, renommer, reclasser automatiquement ou mettre à la corbeille.
 Un fichier glissé depuis l'Explorateur est rangé tout seul ; on peut aussi faire glisser un fichier vers une autre appli.

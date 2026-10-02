@@ -9,20 +9,23 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QRectF, QSize, QTimer, Signal, QObject, QFileInfo, QUrl, QMimeData
+from PySide6.QtCore import Qt, QRectF, QSize, QTimer, Signal, QObject, QFileInfo, QUrl, QMimeData, QStorageInfo
 from PySide6.QtGui import QPainter, QColor, QPen
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QAbstractButton, QTreeWidget, QTreeWidgetItem,
+from PySide6.QtWidgets import (QScrollArea, QWidget, QVBoxLayout, QHBoxLayout, QAbstractButton, QTreeWidget, QTreeWidgetItem,
                                QFileIconProvider, QMenu, QInputDialog, QHeaderView, QAbstractItemView)
 
 import classement
 import composants as ui
+import inventaire
 import themes
 import tools
 
 MAX_LIGNES = 1500
 MAX_RESULTATS = 400
-RACCOURCIS = [("Téléchargements", "~/Downloads", "telechargement"), ("Bureau", "~/Desktop", "bureau"),
-              ("Documents", "~/Documents", "document")]
+DELAI_RECHERCHE = 8                    # secondes au plus pour une recherche dans un dossier
+DOSSIERS_LOURDS = {"windows", "node_modules", "appdata", "programdata", "__pycache__", "system volume information"}
+GLYPHES_LIEUX = {"Téléchargements": "telechargement", "Bureau": "bureau", "Documents": "document", "Images": "oeil",
+                 "Vidéos": "video", "Musique": "note"}
 STYLE_LISTE = """
 QTreeWidget { background: transparent; border: none; color: rgba(255,255,255,235); font-size: 13px; outline: none; }
 QTreeWidget::item { height: 34px; border-radius: 8px; padding-left: 4px; }
@@ -39,15 +42,42 @@ QScrollBar::add-page, QScrollBar::sub-page { background: none; }
 """
 
 
+def disques():
+    """Les disques du PC (C:, D:, clés USB…) : [(nom affiché, chemin, « 120 Go libres »)]."""
+    trouves = []
+    for volume in QStorageInfo.mountedVolumes():
+        if not volume.isValid() or not volume.isReady():
+            continue
+        racine = volume.rootPath()
+        lettre = racine.rstrip("/\\")
+        nom = volume.name() or ("Disque local" if lettre.upper().startswith("C") else "Disque")
+        libres = volume.bytesAvailable()
+        trouves.append((f"{nom} ({lettre})", Path(racine), f"{ui.taille_lisible(libres)} libres" if libres >= 0 else ""))
+    return trouves
+
+
+def _cache(entree):
+    """Fichier caché ou réservé à Windows (pagefile.sys, $Recycle.Bin, System Volume Information…) : on ne le montre pas."""
+    if entree.name.startswith((".", "~$", "$")) or entree.name.lower() in ("desktop.ini", "thumbs.db"):
+        return True
+    try:
+        return bool(entree.stat(follow_symlinks=False).st_file_attributes & 0x6)      # caché (2) ou système (4)
+    except (OSError, AttributeError):
+        return False
+
+
 def lister(dossier):
     """Le contenu d'un dossier : (dossiers, fichiers), chacun trié par nom. Vide si on ne peut pas le lire."""
     dossiers, fichiers = [], []
     try:
         with os.scandir(dossier) as contenu:
             for e in contenu:
-                if e.name.startswith((".", "~$")) or e.name.lower() == "desktop.ini":
+                if _cache(e):
                     continue
-                (dossiers if e.is_dir() else fichiers).append(e.path)
+                try:
+                    (dossiers if e.is_dir() else fichiers).append(e.path)
+                except OSError:
+                    pass
     except OSError:
         pass
     cle = lambda c: os.path.basename(c).casefold()
@@ -60,7 +90,11 @@ def chercher(dossier, texte, limite=MAX_RESULTATS):
     trouves = []
     if not mots:
         return trouves
-    for racine, _, noms in os.walk(dossier):
+    fin = time.monotonic() + DELAI_RECHERCHE            # un disque entier, c'est long : on s'arrête au bout de quelques secondes
+    for racine, sous_dossiers, noms in os.walk(dossier):
+        sous_dossiers[:] = [d for d in sous_dossiers if not d.startswith((".", "$")) and d.lower() not in DOSSIERS_LOURDS]
+        if time.monotonic() > fin:
+            break
         for nom in noms:
             simple = themes.simple(nom)
             if all(m in simple for m in mots):
@@ -88,7 +122,7 @@ class EntreeLaterale(QAbstractButton):
         super().__init__(parent)
         self.nom, self.chemin, self.nombre, self.actif = nom, str(chemin), None, False
         self.glyphe = ui.ICONES.get(glyphe, "")
-        self.setFixedHeight(38)
+        self.setFixedHeight(34)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self.setAttribute(Qt.WA_Hover)
@@ -111,11 +145,46 @@ class EntreeLaterale(QAbstractButton):
         p.drawText(QRectF(10, 0, 24, self.height()), Qt.AlignCenter, self.glyphe)
         p.setPen(ui.TEXTE if self.actif or self.underMouse() else ui.TEXTE_2)
         p.setFont(ui.police(13, self.actif))
-        p.drawText(QRectF(42, 0, self.width() - 86, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.nom)
-        if self.nombre:
+        place = self.width() - (150 if getattr(self, "detail", "") else 86)
+        p.drawText(QRectF(42, 0, place, self.height()), Qt.AlignVCenter | Qt.AlignLeft,
+                   p.fontMetrics().elidedText(self.nom, Qt.ElideRight, int(place)))
+        detail = getattr(self, "detail", "") or (str(self.nombre) if self.nombre else "")
+        if detail:
             p.setPen(ui.TEXTE_3)
             p.setFont(ui.police(11))
-            p.drawText(QRectF(self.width() - 50, 0, 40, self.height()), Qt.AlignVCenter | Qt.AlignRight, str(self.nombre))
+            p.drawText(QRectF(self.width() - 110, 0, 100, self.height()), Qt.AlignVCenter | Qt.AlignRight, detail)
+
+
+class Onglet(QAbstractButton):
+    """« Rangés » / « Sur mon PC » : les deux façons de voir un thème."""
+
+    def __init__(self, texte, parent=None):
+        super().__init__(parent)
+        self.setText(texte)
+        self.actif = False
+        self.setFixedHeight(34)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setAttribute(Qt.WA_Hover)
+
+    def sizeHint(self):
+        return QSize(self.fontMetrics().horizontalAdvance(self.text()) + 40, 34)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+        a = ui.accent()
+        if self.actif:
+            p.setPen(QPen(QColor(a.red(), a.green(), a.blue(), 200), 1.3))
+            p.setBrush(QColor(a.red(), a.green(), a.blue(), 46))
+        else:
+            p.setPen(QPen(ui.CONTOUR, 1))
+            p.setBrush(ui.CARTE_SURVOL if self.underMouse() else ui.CARTE)
+        p.drawRoundedRect(r, 17, 17)
+        p.setPen(ui.TEXTE if self.actif or self.underMouse() else ui.TEXTE_2)
+        p.setFont(ui.police(12, self.actif))
+        p.drawText(r, Qt.AlignCenter, self.text())
 
 
 class Liste(QTreeWidget):
@@ -175,11 +244,14 @@ class _Pont(QObject):
 
 class Gestionnaire(QWidget):
     retour = Signal()                         # revenir au tableau de bord
+    change = Signal()                         # des fichiers ont été rangés ou déplacés : l'inventaire est à refaire
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.dossier = classement.racine()
         self._recherche = ""
+        self.vue = "ranges"                   # « ranges » (ce qui est dans Documents/Dropi) ou « pc » (ce qui attend sur le PC)
+        self._inventaire = []
         self._icones = QFileIconProvider()
         self._pont = _Pont()
         self._pont.comptes.connect(self._maj_comptes)
@@ -205,15 +277,38 @@ class Gestionnaire(QWidget):
         for dossier, _ in themes.ARBORESCENCE:
             self._ajouter_entree(gauche, themes.NOMS_THEMES[dossier], classement.racine() / dossier, themes.GLYPHES.get(dossier, "ouvrir"), dossier)
         gauche.addSpacing(14)
-        gauche.addWidget(ui.TitreSection(2, "Ailleurs", "pc"))
+        gauche.addWidget(ui.TitreSection(2, "Ce PC", "disque"))
         gauche.addSpacing(6)
-        for nom, chemin, glyphe in RACCOURCIS:
-            self._ajouter_entree(gauche, nom, Path(os.path.expanduser(chemin)), glyphe)
+        for nom, chemin, libres in disques():             # C:, D:, clés USB : tout le PC reste accessible
+            entree = self._ajouter_entree(gauche, nom, chemin, "disque")
+            entree.detail, entree.disque = libres, True
+            entree.setToolTip(f"{chemin}  ·  {libres}")
+        gauche.addSpacing(14)
+        gauche.addWidget(ui.TitreSection(3, "Mes dossiers Windows", "pc"))
+        gauche.addSpacing(6)
+        vus = set()
+        for nom, chemin in inventaire.lieux():            # tes vrais dossiers (Windows a pu les mettre sur OneDrive)
+            if nom not in vus:
+                vus.add(nom)
+                self._ajouter_entree(gauche, nom, chemin, GLYPHES_LIEUX.get(nom, "ouvrir"))
         gauche.addStretch(1)
         colonne = QWidget()
         colonne.setLayout(gauche)
-        colonne.setFixedWidth(250)
-        racine.addWidget(colonne)
+        colonne.setFixedWidth(262)
+        defilement = QScrollArea()
+        defilement.setWidget(colonne)
+        defilement.setWidgetResizable(True)
+        defilement.setFrameShape(QScrollArea.NoFrame)
+        defilement.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        defilement.setFixedWidth(276)
+        defilement.viewport().setAutoFillBackground(False)
+        colonne.setAutoFillBackground(False)
+        defilement.setStyleSheet("QScrollArea { background: transparent; border: none; }"
+                                 "QScrollBar:vertical { background: transparent; width: 6px; margin: 2px 0; }"
+                                 "QScrollBar::handle:vertical { background: rgba(255,255,255,55); border-radius: 3px; min-height: 30px; }"
+                                 "QScrollBar::add-line, QScrollBar::sub-line { height: 0; }"
+                                 "QScrollBar::add-page, QScrollBar::sub-page { background: none; }")
+        racine.addWidget(defilement)
 
         # ---- à droite : chemin, recherche, liste
         droite = QVBoxLayout()
@@ -233,6 +328,19 @@ class Gestionnaire(QWidget):
         self.champ.textChanged.connect(self._texte_change)
         haut.addWidget(self.champ)
         droite.addLayout(haut)
+        onglets = QHBoxLayout()
+        onglets.setSpacing(8)
+        self.onglet_ranges = Onglet("Rangés")
+        self.onglet_ranges.clicked.connect(lambda: self._changer_vue("ranges"))
+        self.onglet_pc = Onglet("Sur mon PC")
+        self.onglet_pc.clicked.connect(lambda: self._changer_vue("pc"))
+        onglets.addWidget(self.onglet_ranges)
+        onglets.addWidget(self.onglet_pc)
+        onglets.addStretch(1)
+        self.zone_onglets = QWidget()
+        self.zone_onglets.setLayout(onglets)
+        onglets.setContentsMargins(0, 0, 0, 0)
+        droite.addWidget(self.zone_onglets)
         self.liste = Liste()
         self.liste.itemActivated.connect(self._ouvrir_element)
         self.liste.deposes.connect(self._deposer)
@@ -247,9 +355,11 @@ class Gestionnaire(QWidget):
     def _ajouter_entree(self, lay, nom, chemin, glyphe, theme=None):
         entree = EntreeLaterale(nom, chemin, glyphe)
         entree.theme = theme
+        entree.disque = False
         entree.clicked.connect(lambda _=False, c=chemin: self.aller(c))
         self.entrees.append(entree)
         lay.addWidget(entree)
+        return entree
 
     # ------------------------------------------------------------ navigation
     def aller(self, dossier):
@@ -262,6 +372,48 @@ class Gestionnaire(QWidget):
         self.champ.clear()
         self.champ.blockSignals(False)
         self._recherche = ""
+        # rien de rangé ici mais des fichiers qui attendent sur le PC : on les montre d'emblée
+        if self._dans_dropi(dossier):
+            ranges = sum(len(f) for _, _, f in os.walk(dossier)) if dossier.is_dir() else 0
+            self.vue = "pc" if not ranges and self._du_pc() else "ranges"
+        else:
+            self.vue = "ranges"
+        self.rafraichir()
+
+    def regler_inventaire(self, inventaire):
+        """Ce que l'inventaire a trouvé sur le PC (voir inventaire.py)."""
+        self._inventaire = inventaire.get("fichiers", [])
+        if self.isVisible():
+            self.rafraichir()
+
+    def _theme_courant(self):
+        """Le thème du dossier affiché (« 01 Études »), ou None à la racine ou ailleurs."""
+        if not self._dans_dropi(self.dossier):
+            return None
+        morceaux = self.dossier.relative_to(classement.racine()).parts
+        return morceaux[0] if morceaux else None
+
+    def _du_pc(self):
+        """Les fichiers de l'inventaire qui iraient dans le dossier affiché."""
+        if not self._dans_dropi(self.dossier):
+            return []
+        morceaux = self.dossier.relative_to(classement.racine()).parts
+        trouves = []
+        for f in self._inventaire:
+            if morceaux and f["theme"] != morceaux[0]:
+                continue
+            if len(morceaux) > 1 and f["sous"] != morceaux[1]:
+                continue
+            if os.path.exists(f["chemin"]):
+                trouves.append(f)
+        return trouves
+
+    def _changer_vue(self, vue):
+        self.vue = vue
+        self.champ.blockSignals(True)
+        self.champ.clear()
+        self.champ.blockSignals(False)
+        self._recherche = ""
         self.rafraichir()
 
     def _parent(self):
@@ -270,17 +422,54 @@ class Gestionnaire(QWidget):
 
     def rafraichir(self):
         self.dossier.mkdir(parents=True, exist_ok=True) if self._dans_dropi(self.dossier) else None
+        etats, dans_un_lieu = [], False
         for entree in self.entrees:
-            actif = Path(entree.chemin) == self.dossier or (
-                Path(entree.chemin) in self.dossier.parents and Path(entree.chemin) != classement.racine())
+            chemin = Path(entree.chemin)
+            if entree.theme or chemin == classement.racine():      # un thème : actif aussi dans ses sous-dossiers
+                actif = chemin == self.dossier or (chemin in self.dossier.parents and chemin != classement.racine())
+            elif entree.disque:
+                actif = None                                       # décidé après : seulement si rien d'autre ne correspond
+            else:                                                  # un de tes dossiers : jamais quand on est dans Dropi
+                actif = not self._dans_dropi(self.dossier) and (chemin == self.dossier or chemin in self.dossier.parents)
+                dans_un_lieu = dans_un_lieu or actif
+            etats.append(actif)
+        for entree, actif in zip(self.entrees, etats):
+            if actif is None:
+                chemin = Path(entree.chemin)
+                actif = (not dans_un_lieu and not self._dans_dropi(self.dossier)
+                         and (chemin == self.dossier or chemin in self.dossier.parents))
             if entree.actif != actif:
                 entree.actif = actif
                 entree.update()
+        self.remonter.setEnabled(self.dossier.parent != self.dossier)
         self.ariane.setText(self._nom_chemin(self.dossier))
-        self.reclasser.setVisible(self.dossier.name.startswith("99"))
-        self.liste.setColumnHidden(1, True)
-        dossiers, fichiers = lister(self.dossier)
-        self._remplir(dossiers, fichiers)
+        dans_dropi = self._dans_dropi(self.dossier)
+        du_pc = self._du_pc() if dans_dropi else []
+        self.zone_onglets.setVisible(dans_dropi)
+        self.onglet_pc.setText(f"Sur mon PC, pas encore rangés  ·  {len(du_pc)}")
+        self.onglet_pc.setVisible(bool(du_pc) or self.vue == "pc")
+        self.onglet_ranges.actif, self.onglet_pc.actif = self.vue == "ranges", self.vue == "pc"
+        for onglet in (self.onglet_ranges, self.onglet_pc):
+            onglet.updateGeometry()
+            onglet.update()
+        self.liste.headerItem().setText(1, "Où il est" if self.vue == "pc" else "Rangé dans")
+        if self.vue == "pc" and dans_dropi:
+            en_vrac = [f["chemin"] for f in du_pc if f["vrac"]]
+            self.reclasser.setText(f"Ranger ces {len(en_vrac)} fichiers")
+            self.reclasser.setVisible(bool(en_vrac))
+            self.reclasser.updateGeometry()
+            self.liste.setColumnHidden(1, False)
+            self._remplir([], [f["chemin"] for f in du_pc], avec_lieu=True)
+            a_toi = len(du_pc) - len(en_vrac)
+            self.etat.setText(f"{len(du_pc)} fichier{'s' if len(du_pc) > 1 else ''} sur ton PC iraient ici : {len(en_vrac)} en vrac"
+                              + (f", {a_toi} dans tes propres dossiers (Dropi ne les en sort pas tout seul)" if a_toi else "") + ".")
+        else:
+            self.reclasser.setText("Tout reclasser")
+            self.reclasser.setVisible(self.dossier.name.startswith("99"))
+            self.reclasser.updateGeometry()
+            self.liste.setColumnHidden(1, True)
+            dossiers, fichiers = lister(self.dossier)
+            self._remplir(dossiers, fichiers)
         threading.Thread(target=self._compter, daemon=True).start()
 
     @staticmethod
@@ -294,7 +483,12 @@ class Gestionnaire(QWidget):
             if not morceaux:
                 return "Tous mes fichiers"
             return "  ›  ".join([themes.NOMS_THEMES.get(morceaux[0], morceaux[0]), *morceaux[1:]])
-        return classement.joli(dossier).replace(" › ", "  ›  ")
+        try:
+            dossier.relative_to(Path.home())
+            return classement.joli(dossier).replace(" › ", "  ›  ")
+        except ValueError:                                         # ailleurs sur un disque : C:  ›  Program Files  ›  …
+            morceaux = [m.rstrip("\\/") for m in dossier.parts]
+            return "  ›  ".join(m for m in morceaux if m)
 
     def _remplir(self, dossiers, fichiers, avec_lieu=False):
         self.liste.clear()
@@ -321,7 +515,7 @@ class Gestionnaire(QWidget):
         ligne.setData(0, Qt.UserRole, chemin)
         ligne.setToolTip(0, chemin)
         if avec_lieu:
-            ligne.setText(1, classement.court(p.parent))
+            ligne.setText(1, classement.joli(p.parent) if self.vue == "pc" and not self._recherche else classement.court(p.parent))
         try:
             st = p.stat()
             ligne.setText(2, date_lisible(st.st_mtime))
@@ -357,6 +551,11 @@ class Gestionnaire(QWidget):
 
     def _lancer_recherche(self):
         texte, dossier = self._recherche, self.dossier
+        if self.vue == "pc":
+            mots = themes.simple(texte).split()
+            trouves = [f["chemin"] for f in self._du_pc() if all(m in themes.simple(os.path.basename(f["chemin"])) for m in mots)]
+            self._pont.resultats.emit(texte, trouves[:MAX_RESULTATS])
+            return
         threading.Thread(target=lambda: self._pont.resultats.emit(texte, chercher(dossier, texte)), daemon=True).start()
 
     def _resultats_prets(self, texte, chemins):
@@ -416,6 +615,7 @@ class Gestionnaire(QWidget):
             except OSError:
                 erreurs += 1
         self.rafraichir()
+        self.change.emit()
         lieu = themes.nom_affiche({"theme": theme, "sous": sous})
         self.etat.setText(f"{len(chemins) - erreurs} élément(s) déplacé(s) vers {lieu}" + (f", {erreurs} en échec (fichier ouvert ?)" if erreurs else "") + ".")
 
@@ -437,6 +637,9 @@ class Gestionnaire(QWidget):
         threading.Thread(target=travail, daemon=True).start()
 
     def _tout_reclasser(self):
+        if self.vue == "pc":
+            self._reclasser([f["chemin"] for f in self._du_pc() if f["vrac"]])
+            return
         _, fichiers = lister(self.dossier)
         self._reclasser(fichiers)
 
@@ -444,8 +647,10 @@ class Gestionnaire(QWidget):
         self._reclasser(chemins)
 
     def _ranges(self, message):
+        self.vue = "ranges"
         self.rafraichir()
         self.etat.setText(message)
+        self.change.emit()
 
     def _renommer(self, chemin):
         p = Path(chemin)

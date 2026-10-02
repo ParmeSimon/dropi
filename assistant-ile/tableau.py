@@ -15,7 +15,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QRect, QRectF, QPoint, QPointF, QSize, QTimer, Signal, QObject
 from PySide6.QtGui import QPainter, QColor, QPen, QLinearGradient, QRadialGradient, QPixmap, QFontMetrics
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QStackedLayout, QAbstractButton,
+from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QStackedLayout, QAbstractButton,
                                QScrollArea, QMenu, QFrame, QSizePolicy)
 
 import classement
@@ -23,6 +23,7 @@ import composants as ui
 import donnees
 import fichiers
 import icones
+import inventaire
 import memoire
 import systeme
 import themes
@@ -141,11 +142,12 @@ class TuilePlus(QAbstractButton):
 
 
 class CarteTheme(QAbstractButton):
-    """Un thème de rangement : nom, nombre de fichiers. Clic : ouvre le gestionnaire sur ce thème."""
+    """Un thème : ce qui y est rangé, et ce qui l'attend encore sur le PC. Clic : ouvre le gestionnaire sur ce thème."""
 
     def __init__(self, dossier, parent=None):
         super().__init__(parent)
-        self.dossier, self.nombre = dossier, None
+        self.dossier = dossier
+        self.ranges, self.vrac, self.perso = None, 0, 0
         self.glyphe = ui.ICONES.get(themes.GLYPHES.get(dossier, "ouvrir"), "")
         self.setFixedHeight(58)
         self.setCursor(Qt.PointingHandCursor)
@@ -153,46 +155,64 @@ class CarteTheme(QAbstractButton):
         self.setAttribute(Qt.WA_Hover)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-    def regler(self, nombre):
-        self.nombre = nombre
+    def regler(self, ranges=None, vrac=None, perso=None):
+        if ranges is not None:
+            self.ranges = ranges
+        if vrac is not None:
+            self.vrac, self.perso = vrac, perso or 0
         self.update()
+
+    def _texte(self):
+        if self.ranges is None:
+            return "…"
+        morceaux = []
+        if self.ranges:
+            morceaux.append(f"{self.ranges} rangé{'s' if self.ranges > 1 else ''}")
+        if self.vrac:
+            morceaux.append(f"{self.vrac} à ranger")
+        if self.perso:
+            morceaux.append(f"{self.perso} dans tes dossiers")
+        return "  ·  ".join(morceaux) or "vide"
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         r = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
         a = ui.accent()
-        a_trier = self.dossier.startswith("99") and bool(self.nombre)
+        attend = bool(self.vrac) or (self.dossier.startswith("99") and bool(self.ranges))
+        jaune = QColor(255, 196, 0)
         if self.underMouse():
             p.setPen(QPen(QColor(a.red(), a.green(), a.blue(), 190), 1.4))
             p.setBrush(QColor(a.red(), a.green(), a.blue(), 30))
         else:
-            p.setPen(QPen(QColor(255, 196, 0, 120) if a_trier else QColor(255, 255, 255, 30), 1))
+            p.setPen(QPen(QColor(255, 255, 255, 30), 1))
             p.setBrush(ui.CARTE)
         p.drawRoundedRect(r, 14, 14)
-        p.setPen(QColor(255, 196, 0) if a_trier else a)
+        p.setPen(a)
         p.setFont(ui.police_icones(18))
         p.drawText(QRectF(12, 0, 28, self.height()), Qt.AlignCenter, self.glyphe)
         p.setPen(ui.TEXTE)
         p.setFont(ui.police(13, True))
         p.drawText(QRectF(50, 9, self.width() - 58, 22), Qt.AlignLeft | Qt.AlignVCenter, themes.NOMS_THEMES.get(self.dossier, self.dossier))
-        p.setPen(ui.TEXTE_3)
+        p.setPen(jaune if attend else ui.TEXTE_3)
         p.setFont(ui.police(11))
-        texte = "…" if self.nombre is None else ("vide" if not self.nombre else f"{self.nombre} fichier{'s' if self.nombre > 1 else ''}")
-        p.drawText(QRectF(50, 30, self.width() - 58, 18), Qt.AlignLeft | Qt.AlignVCenter, texte)
+        p.drawText(QRectF(50, 30, self.width() - 58, 18), Qt.AlignLeft | Qt.AlignVCenter,
+                   p.fontMetrics().elidedText(self._texte(), Qt.ElideRight, self.width() - 60))
 
 
 class PuceFenetre(QAbstractButton):
     """Une fenêtre ouverte (ce que montrait la barre des tâches) : clic = la mettre devant, croix = la fermer."""
     fermer = Signal()
+    HAUTEUR = 54
 
     def __init__(self, fenetre, parent=None):
         super().__init__(parent)
         self.fenetre = fenetre
-        self.pix = icones.icone_fichier(fenetre["exe"], 32) if fenetre["exe"] else QPixmap()
-        self.setFixedHeight(40)
-        self.setMaximumWidth(230)
-        self.setMinimumWidth(120)
+        self.pix = icones.icone_fichier(fenetre["exe"], 48) if fenetre["exe"] else QPixmap()
+        self.appli = os.path.splitext(os.path.basename(fenetre["exe"]))[0].replace("-", " ").replace("_", " ").title() if fenetre["exe"] else ""
+        self.setFixedHeight(self.HAUTEUR)
+        self.setMaximumWidth(270)
+        self.setMinimumWidth(150)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self.setAttribute(Qt.WA_Hover)
@@ -200,11 +220,11 @@ class PuceFenetre(QAbstractButton):
         self.setToolTip(fenetre["titre"])
 
     def sizeHint(self):
-        largeur = QFontMetrics(ui.police(12)).horizontalAdvance(self.fenetre["titre"]) + 74
-        return QSize(max(120, min(230, largeur)), 40)
+        largeur = QFontMetrics(ui.police(13, True)).horizontalAdvance(self.fenetre["titre"]) + 92
+        return QSize(max(150, min(270, largeur)), self.HAUTEUR)
 
     def _croix(self):
-        return QRectF(self.width() - 30, 8, 24, 24)
+        return QRectF(self.width() - 34, (self.height() - 26) / 2, 26, 26)
 
     def mouseMoveEvent(self, e):
         self.update()
@@ -221,32 +241,54 @@ class PuceFenetre(QAbstractButton):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
-        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        r = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
         survol = self.underMouse()
-        p.setPen(QPen(ui.CONTOUR, 1))
-        p.setBrush(ui.CARTE_SURVOL if survol else ui.CARTE)
-        p.drawRoundedRect(r, 12, 12)
+        a = ui.accent()
+        if survol:
+            p.setPen(QPen(QColor(a.red(), a.green(), a.blue(), 200), 1.4))
+            p.setBrush(QColor(a.red(), a.green(), a.blue(), 40))
+        else:
+            p.setPen(QPen(QColor(255, 255, 255, 46), 1))
+            p.setBrush(QColor(255, 255, 255, 24))
+        p.drawRoundedRect(r, 14, 14)
         if not self.pix.isNull():
-            p.drawPixmap(QRectF(11, 10, 20, 20), self.pix, QRectF(self.pix.rect()))
-        p.setPen(ui.TEXTE if survol else ui.TEXTE_2)
-        p.setFont(ui.police(12))
-        place = self.width() - 42 - (30 if survol else 8)
-        p.drawText(QRectF(40, 0, place, self.height()), Qt.AlignVCenter | Qt.AlignLeft,
+            p.setOpacity(0.55 if self.fenetre["reduite"] and not survol else 1.0)
+            p.drawPixmap(QRectF(12, (self.height() - 30) / 2, 30, 30), self.pix, QRectF(self.pix.rect()))
+            p.setOpacity(1.0)
+        place = self.width() - 54 - (38 if survol else 12)
+        p.setPen(ui.TEXTE)
+        p.setFont(ui.police(13, True))
+        p.drawText(QRectF(52, 8, place, 20), Qt.AlignVCenter | Qt.AlignLeft,
                    p.fontMetrics().elidedText(self.fenetre["titre"], Qt.ElideRight, int(place)))
-        if self.fenetre["reduite"]:
-            p.setPen(Qt.NoPen)
-            p.setBrush(ui.TEXTE_3)
-            p.drawEllipse(QPointF(21, 35), 1.6, 1.6)
+        p.setPen(ui.TEXTE_3)
+        p.setFont(ui.police(11))
+        sous = self.appli + ("  ·  réduite" if self.fenetre["reduite"] else "")
+        p.drawText(QRectF(52, 28, place, 18), Qt.AlignVCenter | Qt.AlignLeft, p.fontMetrics().elidedText(sous, Qt.ElideRight, int(place)))
+        p.setPen(Qt.NoPen)                                   # le trait sous l'icône : fenêtre ouverte
+        p.setBrush(QColor(a.red(), a.green(), a.blue(), 110 if self.fenetre["reduite"] else 255))
+        p.drawRoundedRect(QRectF(20, self.height() - 6, 14, 3), 1.5, 1.5)
         if survol:
             croix = self._croix()
             sur_croix = croix.contains(QPointF(self.mapFromGlobal(self.cursor().pos())))
-            if sur_croix:
-                p.setPen(Qt.NoPen)
-                p.setBrush(ui.ROUGE)
-                p.drawRoundedRect(croix, 7, 7)
-            p.setPen(ui.TEXTE if sur_croix else ui.TEXTE_3)
+            p.setBrush(ui.ROUGE if sur_croix else QColor(255, 255, 255, 30))
+            p.drawRoundedRect(croix, 8, 8)
+            p.setPen(ui.TEXTE)
             p.setFont(ui.police_icones(9))
             p.drawText(croix, Qt.AlignCenter, ui.ICONES["fermer"])
+
+
+class Dock(QFrame):
+    """La bande des fenêtres ouvertes, en bas : un fond à part pour qu'on la voie tout de suite."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("dock")
+        self.setStyleSheet("#dock { background: rgba(255,255,255,14); border: 1px solid rgba(255,255,255,38); border-radius: 20px; }")
+        self.setFixedHeight(PuceFenetre.HAUTEUR + 22)
+        self.rangee = QHBoxLayout(self)
+        self.rangee.setContentsMargins(12, 10, 12, 10)
+        self.rangee.setSpacing(8)
+        self.rangee.setAlignment(Qt.AlignLeft)
 
 
 class Horloge(QWidget):
@@ -256,7 +298,8 @@ class Horloge(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(330, 80)
+        self.setFixedHeight(80)
+        self.setMinimumWidth(200)
         self._minuteur = QTimer(self, interval=20000, timeout=self.update)
 
     def showEvent(self, _):
@@ -307,57 +350,150 @@ class PastilleReduire(QAbstractButton):
 
 
 class CoinDropi(QAbstractButton):
-    """Dropi, la mascotte du tableau de bord : en haut à gauche, avec une bulle où il te parle. Un clic ouvre le tchat."""
+    """Dropi, la mascotte du tableau de bord : en grand, en haut à gauche. Il te regarde, réagit quand tu le survoles ou
+    le chatouilles, sa bulle dit ce qu'il fait. Clic : le tchat. Double-clic : on joue. Clic droit : tout ce qu'il sait
+    faire. Un fichier déposé sur lui est rangé. Sous la bulle, ses actions rapides."""
+    interaction = Signal(str)             # "survol", "clic", "double", "depot_survol" : pour qu'il réagisse
+    action = Signal(str)                  # "jouer", "ranger_pc", "nouvelle", "capture", "reduire"
+    fichiers = Signal(list)               # des fichiers déposés sur lui
+    menu = Signal(object)
 
-    def __init__(self, mascotte=None, parent=None):
+    def __init__(self, mascotte=None, rayon=38, parent=None):
         super().__init__(parent)
-        self.setFixedSize(430, 80)
+        self.rayon = rayon
+        self.cote = round(rayon * 4.2)
+        self.setFixedHeight(self.cote + 4)
+        self.setMinimumWidth(self.cote + 210)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self.setAttribute(Qt.WA_Hover)
-        self.setToolTip("Parler à Dropi")
-        self.texte, self.etat = "Clique sur moi pour discuter.", "repos"
+        self.setAcceptDrops(True)
+        self.texte, self.etat = "", "repos"
+        self._depot = False
         self.vue = None
         self.plop = QPixmap()
         if mascotte is not None:
-            self.vue = VueMascotte(mascotte, 19, halo=True, parent=self)
+            self.vue = VueMascotte(mascotte, rayon, halo=True, parent=self)
             self.vue.move(0, 0)
             self.vue.setAttribute(Qt.WA_TransparentForMouseEvents)
         else:
-            self.plop = QPixmap.fromImage(image_logo(128))
+            self.plop = QPixmap.fromImage(image_logo(256))
+        # les actions rapides, sous la bulle
+        self.barre = QWidget(self)
+        rangee = QHBoxLayout(self.barre)
+        rangee.setContentsMargins(0, 0, 0, 0)
+        rangee.setSpacing(6)
+        self.b_discuter = ui.Bouton("message", "Discuter", "accent", info="Ouvrir le tchat avec Dropi")
+        self.b_discuter.clicked.connect(self.click)
+        self.b_micro = ui.Bouton("micro", "", "puce", info="Maintiens pour lui parler")
+        self.b_jouer = ui.Bouton("manette", "Jouer", "puce", info="Mini-jeux en 1 contre 1 (ou double-clic sur Dropi)")
+        self.b_jouer.clicked.connect(lambda: self.action.emit("jouer"))
+        self.b_ranger = ui.Bouton("ranger", "Ranger mon PC", "puce", info="Dropi range tout ce qui traîne, par thème")
+        self.b_ranger.clicked.connect(lambda: self.action.emit("ranger_pc"))
+        for b in (self.b_discuter, self.b_micro, self.b_jouer, self.b_ranger):
+            rangee.addWidget(b)
+        rangee.addStretch(1)
+        self._textes = {self.b_jouer: "Jouer", self.b_ranger: "Ranger mon PC"}
+        self.dire("")
+
+    # ---- où est Plop
+    def _centre(self):
+        return QPoint(self.cote // 2, self.cote // 2)
 
     def centre_plop(self):
         """Le centre de Plop, dans les coordonnées du tableau de bord."""
-        return QPointF(self.mapTo(self.window(), QPoint(40, 40)))
+        return QPointF(self.mapTo(self.window(), self._centre()))
 
     def centre_global(self):
-        return QPointF(self.mapToGlobal(QPoint(40, 40)))
+        return QPointF(self.mapToGlobal(self._centre()))
 
     def dire(self, texte, etat="repos"):
-        self.texte, self.etat = texte or "Clique sur moi pour discuter.", etat
+        self.texte, self.etat = texte or self._accueil(), etat
         self.update()
+
+    @staticmethod
+    def _accueil():
+        heure = time.localtime().tm_hour
+        salut = "Bonjour" if 5 <= heure < 18 else ("Bonsoir" if heure < 23 else "Encore debout")
+        return f"{salut} ! On discute ?"
+
+    def resizeEvent(self, e):
+        large = self.width() - self.cote >= 400
+        for bouton, texte in self._textes.items():        # écran étroit : les boutons gardent juste leur icône
+            bouton.setText(texte if large else "")
+        self.barre.setGeometry(self.cote + 14, self.cote // 2 + 14, self.width() - self.cote - 14, 34)
+        super().resizeEvent(e)
+
+    # ---- interactions
+    def enterEvent(self, e):
+        self.interaction.emit("survol")
+        super().enterEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton and self.rect().contains(e.position().toPoint()):
+            self.interaction.emit("clic")
+        super().mouseReleaseEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.interaction.emit("double")
+            self.action.emit("jouer")
+
+    def contextMenuEvent(self, e):
+        self.menu.emit(e.globalPos())
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls():
+            self._depot = True
+            self.interaction.emit("depot_survol")
+            e.setDropAction(Qt.CopyAction)
+            e.accept()
+            self.update()
+
+    def dragLeaveEvent(self, e):
+        self._depot = False
+        self.update()
+
+    def dropEvent(self, e):
+        self._depot = False
+        chemins = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        e.setDropAction(Qt.CopyAction)          # jamais « déplacer » : l'Explorateur pourrait effacer l'original
+        e.accept()
+        self.update()
+        if chemins:
+            self.fichiers.emit(chemins)
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
+        if self._depot:                                    # un fichier arrive : l'anneau « donne-le-moi »
+            a = ui.accent()
+            p.setPen(QPen(QColor(a.red(), a.green(), a.blue(), 220), 2, Qt.DashLine))
+            p.setBrush(QColor(a.red(), a.green(), a.blue(), 26))
+            c = QPointF(self._centre())
+            p.drawEllipse(c, self.rayon * 1.75, self.rayon * 1.75)
         if self.vue is None and not self.plop.isNull():
-            p.drawPixmap(QRectF(8, 8, 64, 64), self.plop, QRectF(self.plop.rect()))
-        fonte = ui.police(12)
-        largeur = min(self.width() - 96, QFontMetrics(fonte).horizontalAdvance(self.texte) + 28)
-        bulle = QRectF(88, 22, max(60, largeur), 36)
+            cote = self.rayon * 3.0
+            p.drawPixmap(QRectF(self.cote / 2 - cote / 2, self.cote / 2 - cote / 2, cote, cote), self.plop, QRectF(self.plop.rect()))
+        texte = "Lâche, je le range !" if self._depot else self.texte
+        fonte = ui.police(13)
+        x = self.cote + 14
+        largeur = min(self.width() - x - 4, QFontMetrics(fonte).horizontalAdvance(texte) + 32)
+        bulle = QRectF(x, self.cote / 2 - 38, max(70, largeur), 42)
         couleur = {"erreur": ui.ERREUR, "succes": ui.SUCCES}.get(self.etat)
-        p.setPen(QPen(QColor(255, 255, 255, 70 if self.underMouse() else 36), 1))
-        p.setBrush(QColor(255, 255, 255, 26 if self.underMouse() else 16))
-        p.drawRoundedRect(bulle, 14, 14)
-        queue = [QPointF(bulle.left() + 1, bulle.center().y() - 6), QPointF(bulle.left() - 8, bulle.center().y()),
-                 QPointF(bulle.left() + 1, bulle.center().y() + 6)]
+        survol = self.underMouse()
+        p.setPen(QPen(QColor(255, 255, 255, 80 if survol else 42), 1))
+        p.setBrush(QColor(255, 255, 255, 30 if survol else 18))
+        p.drawRoundedRect(bulle, 16, 16)
+        queue = [QPointF(bulle.left() + 1, bulle.center().y() - 7), QPointF(bulle.left() - 9, bulle.center().y() + 2),
+                 QPointF(bulle.left() + 1, bulle.center().y() + 7)]
         p.setPen(Qt.NoPen)
         p.drawPolygon(queue)
-        p.setPen(couleur or (ui.TEXTE if self.underMouse() else ui.TEXTE_2))
+        p.setPen(couleur or ui.TEXTE)
         p.setFont(fonte)
-        p.drawText(bulle.adjusted(14, 0, -12, 0), Qt.AlignVCenter | Qt.AlignLeft,
-                   QFontMetrics(fonte).elidedText(self.texte, Qt.ElideRight, int(bulle.width() - 26)))
+        p.drawText(bulle.adjusted(16, 0, -14, 0), Qt.AlignVCenter | Qt.AlignLeft,
+                   QFontMetrics(fonte).elidedText(texte, Qt.ElideRight, int(bulle.width() - 30)))
 
 
 class PanneauChat(QFrame):
@@ -470,6 +606,7 @@ class LigneResultat(QAbstractButton):
 
 
 class _Pont(QObject):
+    inventaire = Signal(dict)
     comptes = Signal(dict)
     applis = Signal(dict)
     index = Signal(list)
@@ -481,10 +618,14 @@ class Tableau(QWidget):
     demande = Signal(str)                 # une phrase pour Dropi (tapée dans la recherche ou dans le tchat)
     veut_fil = Signal()                   # le tchat s'ouvre : il lui faut le fil de la conversation
     actif = Signal(bool)                  # le tableau de bord passe devant / derrière
+    action = Signal(str)                  # une action de Dropi : "jouer", "nouvelle", "capture"…
+    ranger_pc = Signal(list)              # « Ranger mon PC » : les fichiers en vrac que l'inventaire a trouvés
+    fichiers_deposes = Signal(list)       # des fichiers lâchés sur Dropi
     jeu = Signal(str)                     # lancer un jeu
     dossier = Signal(str)                 # ouvrir le gestionnaire de fichiers sur ce dossier
 
-    def __init__(self, mascotte=None, parent=None):
+    def __init__(self, mascotte=None, hauteur=None, parent=None):
+        """hauteur : celle de l'écran où il s'affichera (un petit écran a droit à un Dropi un peu moins grand)."""
         super().__init__(parent)
         self.setWindowTitle("Dropi")
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
@@ -497,6 +638,8 @@ class Tableau(QWidget):
         self._pont.comptes.connect(self._maj_comptes)
         self._pont.applis.connect(self._applis_pretes)
         self._pont.index.connect(self._index_pret)
+        self._pont.inventaire.connect(self._inventaire_pret)
+        self._inventaire, self._inventaire_en_cours = {"fichiers": [], "dossiers": [], "date": 0.0}, False
         self._a_charger = []
         self._chargeur = QTimer(self, interval=0, timeout=self._charger_une_icone)
         self._veille = QTimer(self, interval=2000, timeout=self._maj_fenetres)
@@ -506,21 +649,39 @@ class Tableau(QWidget):
         racine.setContentsMargins(MARGE, 18, MARGE, 22)
         racine.setSpacing(0)
 
-        # ---- le haut : heure, pastille « Réduire », recherche
+        # ---- le haut : Dropi à gauche, « Réduire » et la recherche au milieu, l'heure à droite
+        ecran = QApplication.primaryScreen()
+        if hauteur is None and ecran is not None:
+            hauteur = ecran.geometry().height()
+        petit = (hauteur or 900) < 800
         haut = QHBoxLayout()
         haut.setSpacing(0)
-        self.coin = CoinDropi(mascotte)
+        self.coin = CoinDropi(mascotte, 28 if petit else 38)
         self.coin.clicked.connect(self.basculer_chat)
+        self.coin.action.connect(self._action_dropi)
+        self.coin.fichiers.connect(self.fichiers_deposes.emit)
+        self.coin.menu.connect(self._menu_dropi)
         haut.addWidget(self.coin, 0, Qt.AlignLeft | Qt.AlignTop)
         haut.addStretch(1)
+        centre = QVBoxLayout()
+        centre.setSpacing(14)
         self.pastille = PastilleReduire()
         self.pastille.clicked.connect(self.reduire.emit)
-        haut.addWidget(self.pastille, 0, Qt.AlignTop)
+        centre.addWidget(self.pastille, 0, Qt.AlignHCenter)
+        self.champ = ui.Champ("Lance une appli, un jeu, un fichier… ou demande à Dropi")
+        self.champ.setFixedHeight(46)
+        self.champ.setFont(ui.police(14))
+        self.champ.textChanged.connect(self._chercher)
+        self.champ.returnPressed.connect(self._valider)
+        self.champ.installEventFilter(self)
+        centre.addWidget(self.champ)
+        centre.addStretch(1)
+        haut.addLayout(centre)
         haut.addStretch(1)
         self.horloge = Horloge()
         haut.addWidget(self.horloge, 0, Qt.AlignRight | Qt.AlignTop)
         racine.addLayout(haut)
-        racine.addSpacing(10)
+        racine.addSpacing(14)
         self.pile = QStackedLayout()
         racine.addLayout(self.pile, 1)
         accueil = QWidget()
@@ -530,20 +691,14 @@ class Tableau(QWidget):
         self.pile.addWidget(accueil)
         self.gestionnaire = fichiers.Gestionnaire()
         self.gestionnaire.retour.connect(self.montrer_accueil)
+        self.gestionnaire.change.connect(lambda: self.inventorier(force=True))
         self.pile.addWidget(self.gestionnaire)
 
-        self.champ = ui.Champ("Lance une appli, un jeu, un fichier… ou demande à Dropi")
-        self.champ.setFixedHeight(46)
-        self.champ.setFont(ui.police(14))
-        self.champ.setFixedWidth(620)
-        self.champ.textChanged.connect(self._chercher)
-        self.champ.returnPressed.connect(self._valider)
-        self.champ.installEventFilter(self)
-        corps.addWidget(self.champ, 0, Qt.AlignHCenter)
-        corps.addSpacing(26)
-
-        # ---- le milieu : deux colonnes
-        milieu = QHBoxLayout()
+        # ---- le milieu : deux colonnes, dans une zone qui ne pousse jamais la bande du bas hors de l'écran
+        self.zone_milieu = QWidget()
+        self.zone_milieu.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
+        milieu = QHBoxLayout(self.zone_milieu)
+        milieu.setContentsMargins(0, 0, 0, 0)
         milieu.setSpacing(56)
         gauche = QVBoxLayout()
         gauche.setSpacing(10)
@@ -566,6 +721,10 @@ class Tableau(QWidget):
         colonne.setSpacing(10)
         entete_fichiers = QHBoxLayout()
         entete_fichiers.addWidget(ui.TitreSection(3, "Mes fichiers", "ouvrir"), 1)
+        self.btn_ranger = ui.Bouton("ranger", "Ranger mon PC", "accent", info="Dropi range tout ce qui traîne, par thème (rien ne bouge avant ton accord)")
+        self.btn_ranger.clicked.connect(self.demander_rangement)
+        self.btn_ranger.hide()
+        entete_fichiers.addWidget(self.btn_ranger)
         tout = ui.Bouton("dossier_ouvert", "Tout voir", "puce", info="Ouvrir le gestionnaire de fichiers")
         tout.clicked.connect(lambda: self.montrer_fichiers())
         entete_fichiers.addWidget(tout)
@@ -580,26 +739,23 @@ class Tableau(QWidget):
             grille.addWidget(carte, i // 2, i % 2)
         colonne.addLayout(grille)
         colonne.addSpacing(18)
-        colonne.addWidget(ui.TitreSection(4, "Rangés récemment", "horloge"))
+        self.titre_recents = ui.TitreSection(4, "Rangés récemment", "horloge")
+        colonne.addWidget(self.titre_recents)
         self.recents = QVBoxLayout()
         self.recents.setSpacing(4)
         colonne.addLayout(self.recents)
         colonne.addStretch(1)
         milieu.addLayout(colonne, 2)
-        corps.addLayout(milieu, 1)
+        corps.addWidget(self.zone_milieu, 1)
 
-        # ---- le bas : les fenêtres ouvertes (ce que montrait la barre des tâches)
+        # ---- le bas : les fenêtres ouvertes (ce que montrait la barre des tâches), dans une bande bien visible
         corps.addSpacing(10)
-        corps.addWidget(ui.TitreSection(5, "Fenêtres ouvertes", "pc"))
+        self.titre_fenetres = ui.TitreSection(5, "Fenêtres ouvertes", "pc")
+        corps.addWidget(self.titre_fenetres)
         corps.addSpacing(8)
-        self.bande = QHBoxLayout()
-        self.bande.setSpacing(8)
-        self.bande.setAlignment(Qt.AlignLeft)
-        conteneur = QWidget()
-        conteneur.setLayout(self.bande)
-        conteneur.setFixedHeight(44)
-        self.bande.setContentsMargins(0, 0, 0, 0)
-        corps.addWidget(conteneur)
+        self.dock = Dock()
+        self.bande = self.dock.rangee
+        corps.addWidget(self.dock)
 
         # ---- les résultats de recherche, par-dessus
         self.resultats = QFrame(self)
@@ -625,8 +781,75 @@ class Tableau(QWidget):
         self.coin.dire(texte, etat)
 
     def _placer_chat(self):
-        hauteur = max(320, min(660, self.height() - 150))
-        self.chat.setGeometry(MARGE, 104, ui.LARGEUR_FIL + 36, hauteur)
+        haut = 18 + self.coin.height() + 6
+        hauteur = max(300, min(680, self.height() - haut - 28))
+        self.chat.setGeometry(MARGE, haut, ui.LARGEUR_FIL + 36, hauteur)
+
+    def _action_dropi(self, quoi):
+        if quoi == "ranger_pc":
+            self.demander_rangement()
+        else:
+            self.action.emit(quoi)
+
+    def _menu_dropi(self, position):
+        """Clic droit sur Dropi : tout ce qu'on peut lui demander d'ici."""
+        menu = QMenu(self)
+        menu.addAction("Discuter", self.ouvrir_chat)
+        menu.addAction("Jouer avec Dropi", lambda: self.action.emit("jouer"))
+        menu.addSeparator()
+        menu.addAction("Ranger mon PC", self.demander_rangement)
+        menu.addAction("Ranger mes téléchargements", lambda: self.demande.emit("range mes téléchargements"))
+        menu.addAction("Faire de la place sur le disque", lambda: self.demande.emit("fais de la place"))
+        menu.addAction("Lire du texte à l'écran", lambda: self.action.emit("capture"))
+        menu.addSeparator()
+        menu.addAction("Minuteur 5 minutes", lambda: self.demande.emit("minuteur 5 minutes"))
+        menu.addAction("Verrouiller le PC", lambda: self.demande.emit("verrouille le pc"))
+        menu.addSeparator()
+        menu.addAction("Nouvelle conversation", lambda: self.action.emit("nouvelle"))
+        menu.addAction("Réduire en goutte", self.reduire.emit)
+        menu.exec(position)
+
+    # ------------------------------------------------------------ l'inventaire du PC
+    def inventorier(self, force=False):
+        """Regarde ce qu'il y a vraiment sur le PC (dans un fil de fond), au plus toutes les 5 minutes."""
+        if self._inventaire_en_cours or (not force and time.time() - self._inventaire.get("date", 0) < 300):
+            return
+        self._inventaire_en_cours = True
+
+        def travail():
+            try:
+                resultat = inventaire.faire()
+            except Exception:
+                resultat = {"fichiers": [], "dossiers": [], "date": time.time()}
+            self._pont.inventaire.emit(resultat)
+
+        threading.Thread(target=travail, daemon=True).start()
+
+    def _inventaire_pret(self, resultat):
+        self._inventaire, self._inventaire_en_cours = resultat, False
+        comptes = inventaire.comptes(resultat)
+        for dossier, (vrac, perso) in comptes.items():
+            if dossier in self.cartes:
+                self.cartes[dossier].regler(vrac=vrac, perso=perso)
+        en_vrac = sum(v for v, _ in comptes.values())
+        self.btn_ranger.setVisible(en_vrac > 0)
+        self.btn_ranger.setText(f"Ranger mon PC ({en_vrac})")
+        self.btn_ranger.updateGeometry()
+        self.gestionnaire.regler_inventaire(resultat)
+        # la recherche trouve aussi ces fichiers-là, où qu'ils soient
+        deja = {c for _, c in self._index}
+        self._index += [(themes.simple(os.path.basename(f["chemin"])), f["chemin"]) for f in resultat["fichiers"] if f["chemin"] not in deja]
+
+    def en_vrac(self):
+        return [f["chemin"] for f in self._inventaire.get("fichiers", []) if f["vrac"]]
+
+    def demander_rangement(self):
+        """« Ranger mon PC » : Dropi prépare le plan et le montre dans le tchat. Rien ne bouge avant ton accord."""
+        chemins = self.en_vrac()
+        if chemins:
+            self.ranger_pc.emit(chemins)
+        else:
+            self.dire("Rien ne traîne : tout est déjà rangé.", "succes")
 
     def ouvrir_chat(self):
         if not self.chat.isVisible():
@@ -648,10 +871,22 @@ class Tableau(QWidget):
     # ------------------------------------------------------------ fond
     def resizeEvent(self, e):
         self._fond = None
+        # Dropi à gauche et l'heure à droite ont la même largeur : la recherche reste au milieu de l'écran
+        cote = max(self.coin.minimumWidth(), min(560, (self.width() - 2 * MARGE - 640) // 2))
+        self.coin.setFixedWidth(cote)
+        self.horloge.setFixedWidth(cote)
+        self.champ.setFixedWidth(max(300, min(620, self.width() - 2 * MARGE - 2 * cote - 20)))
+        super().resizeEvent(e)
         self._placer_resultats()
         if hasattr(self, "chat"):
             self._placer_chat()
-        super().resizeEvent(e)
+        QTimer.singleShot(0, self._adapter)
+
+    def _adapter(self):
+        """Petit écran : on montre moins de lignes plutôt que de laisser le bas sortir de l'écran."""
+        self._construire_recents()
+        self._signature_fenetres = None
+        self._maj_fenetres()
 
     @staticmethod
     def peindre_fond(p, rect):
@@ -708,6 +943,7 @@ class Tableau(QWidget):
         self._construire_jeux()
         self._construire_recents()
         self._maj_fenetres()
+        self.inventorier()
         threading.Thread(target=self._compter, daemon=True).start()
         if time.monotonic() - self._index_date > 120:
             threading.Thread(target=self._indexer, daemon=True).start()
@@ -715,6 +951,7 @@ class Tableau(QWidget):
     def montrer_fichiers(self, dossier=None):
         """Passe au gestionnaire de fichiers (sur un thème, ou sur tous les fichiers)."""
         self._fin_recherche()
+        self.fermer_chat()
         self.gestionnaire.aller(dossier or classement.racine())
         self.pile.setCurrentWidget(self.gestionnaire)
         self.gestionnaire.liste.setFocus()
@@ -746,8 +983,9 @@ class Tableau(QWidget):
             if w:
                 w.deleteLater()
         colonnes = max(4, min(9, (self.width() * 3 // 5 - MARGE) // 110))
+        rangees = 3 if self.height() >= 980 else 2
         self._tuiles = []
-        for i, appli in enumerate(self._epingles):
+        for i, appli in enumerate(self._epingles[:colonnes * rangees - 1]):
             tuile = TuileAppli(appli)
             tuile.clicked.connect(lambda _=False, a=appli: lancer_appli(a["nom"], a["id"]))
             tuile.menu.connect(lambda pos, a=appli: self._menu_appli(a, pos))
@@ -755,10 +993,10 @@ class Tableau(QWidget):
             self._tuiles.append(tuile)
             if icones.deja_prete(appli["id"], 64):         # déjà en cache : tout de suite (l'animation d'ouverture la montre)
                 tuile.pix = icones.icone_appli(appli["id"], 64)
-        if len(self._epingles) < MAX_EPINGLES:
+        if len(self._tuiles) < colonnes * rangees:
             plus = TuilePlus()
             plus.clicked.connect(self._choisir_appli)
-            n = len(self._epingles)
+            n = len(self._tuiles)
             self.grille_applis.addWidget(plus, n // colonnes, n % colonnes)
         self._a_charger = [t for t in self._tuiles if t.pix.isNull()]
         self._chargeur.start()
@@ -839,13 +1077,18 @@ class Tableau(QWidget):
     def _maj_comptes(self, comptes):
         for dossier, n in comptes.items():
             if dossier in self.cartes:
-                self.cartes[dossier].regler(n)
+                self.cartes[dossier].regler(ranges=n)
 
     def _construire_recents(self):
         while self.recents.count():
             w = self.recents.takeAt(0).widget()
             if w:
                 w.deleteLater()
+        # la place qui reste sous les 8 cartes de thèmes (4 rangées de 58 + titres) : 46 px par ligne
+        place = max(0, min(6, (self.zone_milieu.height() - 366) // 46)) if self.zone_milieu.height() > 50 else 4
+        self.titre_recents.setVisible(place > 0)
+        if not place:
+            return
         vus, lignes = set(), 0
         for e in reversed(classement.derniers(60)):
             chemin = e.get("apres", "")
@@ -858,7 +1101,7 @@ class Tableau(QWidget):
             ligne.clicked.connect(resultat["action"])
             self.recents.addWidget(ligne)
             lignes += 1
-            if lignes >= 6:
+            if lignes >= place:
                 break
         if not lignes:
             vide = ui.Etiquette("Rien pour l'instant : ce que tu télécharges arrive ici, déjà rangé.", 12, ui.TEXTE_3)
@@ -892,19 +1135,29 @@ class Tableau(QWidget):
             w = self.bande.takeAt(0).widget()
             if w:
                 w.deleteLater()
+        self.titre_fenetres.texte = f"05 — FENÊTRES OUVERTES  ·  {len(liste)}"
+        self.titre_fenetres.update()
         if not liste:
-            self.bande.addWidget(ui.Etiquette("Aucune fenêtre ouverte.", 12, ui.TEXTE_3))
+            vide = ui.Etiquette("Aucune fenêtre ouverte. Lance une appli : elle apparaîtra ici, un clic la ramènera devant.", 12, ui.TEXTE_3)
+            self.bande.addWidget(vide)
             return
-        place = self.width() - 2 * MARGE
+        place = self.width() - 2 * MARGE - 24
+        montrees = 0
         for f in liste:
             puce = PuceFenetre(f)
-            place -= puce.sizeHint().width() + 8
-            if place < 0:
+            largeur = puce.sizeHint().width() + 8
+            if place - largeur < (70 if montrees < len(liste) - 1 else 0):      # on garde la place du « +N »
                 puce.deleteLater()
                 break
+            place -= largeur
             puce.clicked.connect(lambda _=False, h=f["hwnd"]: systeme.activer(h))
             puce.fermer.connect(lambda h=f["hwnd"]: (systeme.fermer(h), QTimer.singleShot(400, self._maj_fenetres)))
             self.bande.addWidget(puce)
+            montrees += 1
+        if montrees < len(liste):
+            reste = ui.Etiquette(f"+ {len(liste) - montrees}", 13, ui.TEXTE_2, gras=True)
+            reste.setToolTip("\n".join(f["titre"] for f in liste[montrees:]))
+            self.bande.addWidget(reste)
 
     # ------------------------------------------------------------ recherche
     def _placer_resultats(self):
