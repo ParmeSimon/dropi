@@ -27,6 +27,26 @@ Config : `config.yaml` à côté de Dropi.exe (tes dossiers de rangement, stream
 | Carte graphique | utilisée si elle est libre (Nvidia, AMD, Intel via Vulkan). Occupée par un jeu ou une vidéo (> 50 %) : l'IA reste sur le processeur. Mémoire vidéo juste : seules les couches qui rentrent y vont, avec 1,5 Go de marge pour le reste. `ia_gpu: non` pour ne jamais l'utiliser |
 | Processeur | un cœur laissé libre, priorité basse : le PC reste fluide |
 
+## Mises à jour automatiques
+
+Dropi regarde la dernière release GitHub 30 secondes après son lancement, puis toutes les 6 heures. S'il y en a une
+plus récente, la goutte affiche « Dropi 1.2.0 est disponible · clique pour installer » (et une ligne dans la
+discussion). Un clic télécharge le nouveau `Dropi-Setup.exe`, vérifie sa taille et son empreinte SHA-256, ferme Dropi,
+installe par-dessus (ta config, ta mémoire et ton modèle sont gardés) et relance Dropi. Rien n'est installé sans ton clic.
+Clic droit sur la goutte → « Vérifier les mises à jour » pour demander tout de suite. Pour couper : `mise_a_jour: non`
+dans config.yaml.
+
+### Publier une mise à jour (pour toi qui développes)
+
+1. Augmente le numéro dans `version.py` (ex. `"1.1.0"`).
+2. `python construire_exe.py` → `construction/Dropi-Setup.exe`.
+3. Commit et push du code.
+4. Sur GitHub : **Releases → Draft a new release**, tag **`v1.1.0`** (le même numéro que `version.py`, avec un « v »),
+   un titre, puis glisse **`Dropi-Setup.exe`** dans les fichiers joints (le nom doit être exactement celui-là), **Publish release**.
+
+Les gens qui ont déjà Dropi 1.0.0 ou plus reçoivent la proposition dans les 6 heures (ou tout de suite via le menu).
+Ne marque pas la release « pre-release » : elle serait ignorée.
+
 ## Construire l'installateur (pour les développeurs)
 
 Il faut Python 3.11+ et Inno Setup 6 (`winget install JRSoftware.InnoSetup`). Double-clique sur **construire_exe.bat** :
@@ -223,6 +243,39 @@ Glisse un ou plusieurs fichiers sur la goutte : elle s'agrandit, affiche les fic
 - **Ouvrir**, **Déplacer…** (tu choisis le dossier), **Bureau**, **Supprimer** (2 clics, part à la corbeille),
   **Afficher dans l'explorateur**
 - ou tape / dis ce que tu veux : « renomme-le facture_mars », « résume-le »…
+
+## Jouer avec Dropi
+
+Des mini-jeux en 1 contre 1, Dropi est l'adversaire (aucune IA ni internet : il répond tout de suite).
+Pour ouvrir le panneau : **clique sur Dropi** dans l'écran d'accueil, sur la manette en haut de la discussion,
+ou écris « on joue ? », « je m'ennuie », « une partie de morpion », « pierre feuille ciseaux », « puissance 4 », « mémoire », « devine le nombre », « duel de réflexes ».
+
+| Jeu | Règle |
+|---|---|
+| Morpion | Tu es les croix. Dropi calcule le meilleur coup mais se trompe une fois sur cinq : tu peux le battre. Il commence une partie sur deux. |
+| Pierre-feuille-ciseaux | Premier à 3 points. Dropi retient ce que tu joues le plus souvent et essaie de le contrer : varie ! |
+| Puissance 4 | Tu joues les pions de ta couleur, Dropi voit 4 coups d'avance mais rate un coup sur dix. Les pions tombent. |
+| Mémoire | 8 paires d'emojis. Une paire trouvée = tu rejoues. Dropi ne retient que 6 cartes vues sur 10 : sa mémoire n'est pas parfaite. |
+| Devine le nombre | Dropi pense à un nombre de 1 à 100 et tu le cherches ; puis tu en choisis un et c'est lui qui cherche (plus grand / plus petit / trouvé). Le moins d'essais gagne. |
+| Réflexe | Premier à 2 manches. Clique dès que la zone passe au vert (avant : Dropi gagne la manche). Dropi réagit en ~340 ms. |
+
+Dropi réagit à chaque manche (content, vexé, surpris).
+
+## Convertir un fichier
+
+Dépose un fichier sur Dropi, puis **Convertir** (ou écris « convertis en jpg », « mets ça en pdf », « réduis l'image »).
+Tout se fait sur le PC, sans IA ; le fichier converti est créé à côté de l'original, qui n'est jamais touché
+(« photo (2).jpg » si le nom existe déjà).
+
+| Tu déposes | Dropi propose |
+|---|---|
+| Une image (PNG, JPG, WebP, BMP, GIF, TIFF) | En PNG / JPG / WebP / PDF, ou « Image réduite » (1280 px max) |
+| Plusieurs images | Idem, et **Un seul PDF** avec toutes les images |
+| Un PDF | **Images** (une par page, dans un dossier, 60 pages max) ou **Texte** (.txt) |
+| Un texte (txt, md, csv, json, html, code…) | En PDF |
+| Word, Excel, PowerPoint | En PDF (Word/Excel/PowerPoint doit être installé ; pour un .docx sans Word : PDF du texte seul, mise en forme simplifiée) |
+
+Pas de vidéo ni d'audio (il faudrait ffmpeg, +80 Mo), ni de HEIC (photos d'iPhone).
 
 ## Exemples de demandes
 

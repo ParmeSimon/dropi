@@ -70,7 +70,27 @@ MOTIFS = [
     (r"range (?:mon |le )?bureau", lambda m: _outil("ranger_dossier", dossier="~/Desktop")),
     (r"annule(?: (?:ca|le rangement|le dernier rangement))?", lambda m: _outil("annuler_rangement")),
     (r"fais(?: moi)? de la place|libere de la place|nettoie (?:mon |le )?(?:disque|pc)", lambda m: ("ile", "_faire_de_la_place")),
-    # ---- jeux
+    # ---- jouer avec Dropi (les mini-jeux)
+    (r"(?:on )?(?:joue|jouons|jouer)(?: (?:au|a la|aux|a|un|une|le|la))? ?(?:morpion|tic tac toe|tictactoe|croix et ronds)(?: avec moi| ensemble| contre moi)?"
+     r"|(?:une )?partie de (?:morpion|tic tac toe)|morpion", lambda m: ("ile", "_jeu_morpion")),
+    (r"(?:on )?(?:joue|jouons|jouer)(?: (?:au|a la|aux|a|un|une|le|la))? ?(?:pierre ?(?:feuille)? ?(?:ciseaux?)?|chifoumi|shifumi|pfc)(?: avec moi| ensemble| contre moi)?"
+     r"|(?:une )?partie de (?:pierre ?feuille ?ciseaux?|chifoumi|shifumi)|pierre feuille ciseaux?|chifoumi|shifumi", lambda m: ("ile", "_jeu_pfc")),
+    (r"(?:on )?(?:joue|jouons|jouer)?(?: (?:au|a la|aux|a|un|une|le|la))? ?(?:puissance ?4|puissance quatre|connect ?4|p4)(?: avec moi| ensemble| contre moi)?"
+     r"|(?:une )?partie de (?:puissance ?4|connect ?4)", lambda m: ("ile", "_jeu_p4")),
+    (r"(?:on )?(?:joue|jouons|jouer)?(?: (?:au|a la|aux|a|un|une|le|la))? ?(?:memoire|memory|jeu de memoire|jeu de paires|paires)(?: avec moi| ensemble| contre moi)?"
+     r"|(?:une )?partie de (?:memoire|memory)", lambda m: ("ile", "_jeu_memoire")),
+    (r"(?:on )?(?:joue|jouons|jouer)?(?: (?:au|a la|aux|a|un|une|le|la))? ?(?:devine(?: le)? nombre|plus ou moins|juste prix|nombre mystere)(?: avec moi| ensemble| contre moi)?",
+     lambda m: ("ile", "_jeu_nombre")),
+    (r"(?:on )?(?:joue|jouons|jouer)(?: (?:au|a la|aux|a|un|une|le|la))? ?(?:reflexes?|reactivite|duel de reflexes?)(?: avec moi| ensemble| contre moi)?"
+     r"|(?:un )?duel de reflexes?|test de reflexes?", lambda m: ("ile", "_jeu_reflexe")),
+    # s'ennuyer, vouloir jouer, demander un jeu : on ouvre les mini-jeux (sans passer par l'IA)
+    (r"(?:.*\b)?(?:m ?'?ennui\w*|ennui\w*|j ?'?ai rien a faire|rien a faire|(?:occupe|divertis|distrais|amuse)(?: |-)?(?:moi)?"
+     r"|je veux (?:m ?'?amuser|jouer|un jeu)|j ?'?ai envie de jouer|envie de jouer|je veux faire un jeu)(?:\b.*)?", lambda m: ("ile", "_jeux")),
+    (r"(?:on |tu veux |veux tu |tu veut |tu sais |sais tu )?(?:joue|jouons|jouer)(?: un peu| ensemble| avec moi| avec toi| contre moi| une partie| a un jeu| a quelque chose)*"
+     r"|(?:lance|ouvre|fais|propose|montre)(?: moi)? (?:un |une |les |des |tes )?(?:petits? )?(?:mini ?jeux?|jeux?|partie|duel)"
+     r"|(?:t'as|tu as|as tu|y a t il|il y a) (?:un |des )?(?:petits? )?(?:jeux?|mini ?jeux?)(?: a me proposer| pour moi| ici)?"
+     r"|(?:un |une |des )?(?:petits? )?(?:mini ?jeux?|jeux?|partie|defi)(?: avec toi| contre toi)?|defie(?: moi)?|je te defie|joue avec moi", lambda m: ("ile", "_jeux")),
+    # ---- jeux installés
     (r"(?:(?:montre(?: moi)?|affiche|liste) )?(?:mes|les) jeux|quels jeux (?:j'ai|ai je|sont installes)", lambda m: ("ile", "_mes_jeux")),
     # ---- capture de texte à l'écran
     (r"(?:capture|lis|copie|recupere|extrais)(?: moi)? (?:le |du |un )?texte (?:de |a |sur )?l'ecran"

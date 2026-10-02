@@ -80,7 +80,7 @@ def construire():
         "--name", "Dropi", "--icon", str(ICI / "logo.ico"),
         "--distpath", str(CHANTIER / "dist"), "--workpath", str(CHANTIER / "build"), "--specpath", str(CHANTIER),
         "--collect-all", "faster_whisper", "--collect-binaries", "ctranslate2", "--collect-all", "winrt",
-        "--collect-all", "_sounddevice_data", *exclusions,
+        "--collect-all", "_sounddevice_data", "--collect-all", "pypdfium2", "--collect-all", "pypdfium2_raw", *exclusions,
         str(ICI / "island.py"),
     ], check=True, cwd=ICI)
     etape("Allègement")
@@ -139,12 +139,18 @@ Type: files; Name: "{group}\Assistant Island.lnk"
 
 [Run]
 Filename: "{app}\Dropi.exe"; Description: "Lancer Dropi"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Dropi.exe"; Flags: nowait; Check: Relancer
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/IM Dropi.exe /F"; Flags: runhidden; RunOnceId: "StopDropi"
 Filename: "{sys}\taskkill.exe"; Parameters: "/IM llama-server.exe /F"; Flags: runhidden; RunOnceId: "StopMoteur"
 
 [Code]
+function Relancer(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELANCER|0}') = '1';
+end;
+
 function InitializeSetup(): Boolean;
 var R: Integer;
 begin
@@ -161,7 +167,8 @@ def installateur():
                              Path(r"C:\Program Files\Inno Setup 6\ISCC.exe")] if p.exists()), None)
     if iscc is None:
         sys.exit("Inno Setup 6 est nécessaire :  winget install JRSoftware.InnoSetup")
-    version = os.environ.get("VERSION") or "1.0"
+    from version import VERSION
+    version = os.environ.get("VERSION") or VERSION
     iss = CHANTIER / "assistant.iss"
     iss.write_text(SCRIPT_INNO.replace("@VERSION@", version).replace("@SORTIE@", str(CHANTIER))
                    .replace("@LOGO@", str(ICI / "logo.ico")).replace("@DIST@", str(DIST)),

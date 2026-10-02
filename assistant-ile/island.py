@@ -42,6 +42,10 @@ import ordres
 import rappels
 import messagerie
 import ocr
+import convertir
+import miseajour
+from version import VERSION
+import partie
 import composants as ui
 from brain import Cerveau, Arrete
 from mascotte import Mascotte, VueMascotte, image_logo
@@ -55,8 +59,9 @@ SURVOL = (350, 124)     # quand un fichier passe au-dessus
 LARGEUR_FICHIERS = 500
 LARGEUR_CLE = 420
 LARGEUR_MAIL = 440
+LARGEUR_JEUX = 420
 DISCUSSION = (540, 630)
-PANNEAUX = ("discussion", "fichiers", "cle", "mail")
+PANNEAUX = ("discussion", "fichiers", "cle", "mail", "jeux")
 RAYON_MAX = 22
 R_MASCOTTE = 13.5
 FICHIERS_VISIBLES = 3
@@ -164,6 +169,8 @@ class Pont(QObject):
     texte_lu = Signal(str, str)       # le texte lu dans une capture d'écran, ou l'erreur
     partiel = Signal(str)             # la réponse de l'IA en train de s'écrire
     moteur = Signal(str)              # le moteur d'IA télécharge ou charge quelque chose ("" : fini)
+    maj = Signal(object)              # une mise à jour de Dropi est disponible (la release GitHub)
+    maj_prete = Signal(str, str)      # la mise à jour est téléchargée : chemin du setup, ou message d'erreur
     mail = Signal(str)                # l'essai de connexion à la messagerie est fini : "" ou l'explication de l'échec
 
 
@@ -240,6 +247,8 @@ class Ile(QWidget):
         self._origine = "depot"          # d'où viennent les fichiers du panneau : depot ou telechargement
         self._proposes = []
         self._toast_telechargement = False
+        self._toast_maj = False
+        self._maj, self._maj_en_cours = None, False
         self._carte_nettoyage = None
         self._mode_telechargements = str((config.get("telechargements") or {}).get("mode", "auto"))
         self._tailles_en_cours = {}
@@ -278,6 +287,13 @@ class Ile(QWidget):
         self.pont.mail.connect(self._fin_mail)
         self.pont.partiel.connect(self._texte_partiel)
         self.pont.moteur.connect(self._etat_moteur)
+        self.pont.maj.connect(self._maj_dispo)
+        self.pont.maj_prete.connect(self._maj_prete)
+        # mises à jour : seulement pour l'appli installée (Dropi.exe), sauf si config.yaml le demande (mise_a_jour: oui)
+        reglage_maj = str(config.get("mise_a_jour", "prevenir")).lower()
+        self._veilleur_maj = miseajour.Veilleur(self.pont.maj.emit)
+        if reglage_maj not in ("non", "false", "0") and (donnees.FIGE or reglage_maj == "oui"):
+            self._veilleur_maj.demarrer()
         self._vivant = None                  # le texte de l'IA en train de s'écrire dans le fil
         if config.get("prechauffer_ia", True):
             QTimer.singleShot(4000, lambda: threading.Thread(target=self.cerveau.prechauffer, daemon=True).start())
@@ -287,6 +303,7 @@ class Ile(QWidget):
         self._construire_fichiers()
         self._construire_cle()
         self._construire_mail()
+        self._construire_jeux()
         self._maj_tuile_mail()
         self.voile = ui.Voile(self)
 
@@ -333,8 +350,11 @@ class Ile(QWidget):
         tete, self.vue_disc, self.titre_disc = self._entete("Dropi")
         nouveau = ui.Bouton("nouveau", info="Nouvelle conversation")
         nouveau.clicked.connect(self._reset)
+        jouer = ui.Bouton("manette", info="Jouer avec Dropi")
+        jouer.clicked.connect(lambda: self._jeux())
         reduire = ui.Bouton("reduire", info="Réduire (Échap)")
         reduire.clicked.connect(self.fermer)
+        tete.addWidget(jouer)
         tete.addWidget(nouveau)
         tete.addWidget(reduire)
         lay.addLayout(tete)
@@ -349,6 +369,9 @@ class Ile(QWidget):
         acc.addStretch(1)
         self.vue_accueil = VueMascotte(self.mascotte, 19, halo=True)
         acc.addWidget(self.vue_accueil, 0, Qt.AlignHCenter)
+        self.vue_accueil.setCursor(Qt.PointingHandCursor)
+        self.vue_accueil.setToolTip("Clique sur moi pour jouer !")
+        self.vue_accueil.mousePressEvent = lambda e: self._jeux()
         titre = ui.Etiquette("Qu'est-ce que je peux faire pour toi ?", 18, gras=True)
         titre.setAlignment(Qt.AlignCenter)
         sous = ui.Etiquette("Écris, parle, ou dépose un fichier sur la goutte.", 12, ui.TEXTE_3)
@@ -435,6 +458,39 @@ class Ile(QWidget):
         self._section(lay, 3, "Mes applis", "applis", tuiles)
         self.section_applis.show()
 
+    def _construire_jeux(self):
+        self.page_jeux = partie.PageJeux(self.mascotte, self)
+        self.page_jeux.hide()
+        self.page_jeux.fermer.connect(self.fermer)
+        self.page_jeux.humeur.connect(lambda humeur, duree: self.mascotte.reagir(humeur, duree))
+
+    def _jeux(self, jeu=None):
+        """Ouvre « Jouer avec Dropi » (le menu, ou directement un jeu : morpion, pfc, reflexe)."""
+        if self.occupee:
+            return
+        self.page_jeux.ouvrir(jeu)
+        self.mascotte.reagir("content", 1.0)
+        self._aller("jeux")
+        self._premier_plan()
+
+    def _jeu_morpion(self):
+        self._jeux("morpion")
+
+    def _jeu_pfc(self):
+        self._jeux("pfc")
+
+    def _jeu_reflexe(self):
+        self._jeux("reflexe")
+
+    def _jeu_p4(self):
+        self._jeux("p4")
+
+    def _jeu_memoire(self):
+        self._jeux("memoire")
+
+    def _jeu_nombre(self):
+        self._jeux("nombre")
+
     def _construire_fichiers(self):
         self.page_fichiers = page = QWidget(self)
         page.hide()
@@ -462,17 +518,19 @@ class Ile(QWidget):
 
         puces = QHBoxLayout()
         puces.setSpacing(6)
-        ouvrir = ui.Bouton("ouvrir", "Ouvrir", "puce")
+        ouvrir = ui.Bouton("ouvrir", "", "puce", info="Ouvrir le fichier")
         ouvrir.clicked.connect(lambda: self._action_directe("ouvrir"))
-        deplacer = ui.Bouton("deplacer", "Déplacer…", "puce")
+        deplacer = ui.Bouton("deplacer", "", "puce", info="Déplacer vers un autre dossier…")
         deplacer.clicked.connect(self._deplacer)
-        self.btn_suppr = ui.Bouton("supprimer", "Supprimer", "puce", info="Envoie à la corbeille")
+        self.btn_suppr = ui.Bouton("supprimer", "", "puce", info="Envoyer à la corbeille")
         self.btn_suppr.clicked.connect(self._supprimer)
         montrer = ui.Bouton("explorateur", genre="puce", info="Afficher dans l'explorateur")
         montrer.clicked.connect(lambda: self._action_directe("afficher"))
         self.btn_resume = ui.Bouton("document", "Résumer", "puce", info="Lire le document et t'en faire un résumé")
         self.btn_resume.clicked.connect(self._resumer)
-        for b in (self.btn_resume, ouvrir, deplacer, self.btn_suppr, montrer):
+        self.btn_convertir = ui.Bouton("paquet", "Convertir", "puce", info="Changer le format (JPG, PNG, PDF…)")
+        self.btn_convertir.clicked.connect(self._menu_convertir)
+        for b in (self.btn_resume, self.btn_convertir, ouvrir, deplacer, self.btn_suppr, montrer):
             puces.addWidget(b)
         puces.addStretch(1)
         lay.addLayout(puces)
@@ -671,6 +729,8 @@ class Ile(QWidget):
             return QSizeF(LARGEUR_CLE, self.page_cle.sizeHint().height())
         if self.mode == "mail":
             return QSizeF(LARGEUR_MAIL, self.page_mail.sizeHint().height())
+        if self.mode == "jeux":
+            return QSizeF(LARGEUR_JEUX, self.page_jeux.sizeHint().height())
         if self._musique_visible():
             return QSizeF(LARGEUR_MUSIQUE, CERCLE)
         texte = self._texte_capsule()
@@ -690,7 +750,7 @@ class Ile(QWidget):
 
     def _page(self, mode):
         return {"discussion": self.page_discussion, "fichiers": self.page_fichiers, "cle": self.page_cle,
-                "mail": self.page_mail}.get(mode)
+                "mail": self.page_mail, "jeux": self.page_jeux}.get(mode)
 
     def _aller(self, mode):
         self.mode = mode
@@ -745,7 +805,8 @@ class Ile(QWidget):
             self.voile.couvrir(rect, min(rect.height() / 2, RAYON_MAX))
             champ_cle = self.champ_passe if self.champ_login.text() else self.champ_login
             champ_mail = self.champ_mdp_mail if self.champ_adresse.text() else self.champ_adresse
-            champ = {"discussion": self.champ, "cle": champ_cle, "mail": champ_mail}.get(self.mode, self.champ_fich)
+            champ = {"discussion": self.champ, "cle": champ_cle, "mail": champ_mail,
+                     "jeux": self.page_jeux}.get(self.mode, self.champ_fich)
             champ.setFocus()
 
     # ================================================================ la goutte : géométrie
@@ -1156,7 +1217,7 @@ class Ile(QWidget):
     # ================================================================ statut
     def _statut(self, texte, etat="repos", duree=0):
         self.statut, self.etat = texte, etat
-        self._toast_telechargement = self._toast_cle = self._toast_capture = self._toast_rappel = False
+        self._toast_telechargement = self._toast_cle = self._toast_capture = self._toast_rappel = self._toast_maj = False
         self._fin_toast.stop()
         if duree:
             self._fin_toast.start(duree)
@@ -1217,6 +1278,8 @@ class Ile(QWidget):
         self._appui = None
         if self._glisse:
             self._fin_glisse()
+        elif self.mode == "repos" and not self._libre and self._toast_maj:
+            self._installer_maj()
         elif self.mode == "repos" and not self._libre and self._toast_telechargement:
             self._ouvrir_proposes()
         elif self.mode == "repos" and not self._libre and self._toast_cle:
@@ -1335,6 +1398,7 @@ class Ile(QWidget):
         auto.setChecked(demarrage.est_active())
         auto.toggled.connect(lambda oui: demarrage.activer() if oui else demarrage.desactiver())
         menu.addSeparator()
+        menu.addAction(f"Vérifier les mises à jour (version {VERSION})", self._chercher_maj)
         menu.addAction("Quitter", QApplication.quit)
         self._dialogue = True
         menu.exec(e.globalPos())
@@ -1471,7 +1535,51 @@ class Ile(QWidget):
         self.autres.setText(f"+ {reste} autre{'s' if reste > 1 else ''}")
         self._annuler_suppr()
         self.btn_resume.setVisible(any(Path(c).suffix.lower() in tools.RESUMABLES for c in self.fichiers))
+        self.btn_convertir.setVisible(bool(convertir.formats_possibles(self.fichiers)))
         self._maj_titre_fichiers()
+
+    def _menu_convertir(self):
+        """Le bouton « Convertir » : un petit menu des formats possibles pour les fichiers déposés."""
+        choix = convertir.formats_possibles(self.fichiers)
+        if not choix or self.occupee:
+            return
+        menu = QMenu(self)
+        for cle, libelle in choix:
+            menu.addAction(("En " if cle in ("png", "jpg", "webp", "pdf") else "") + libelle,
+                           lambda c=cle, l=libelle: self._convertir(c, l))
+        self._dialogue = True                     # le menu a le focus : l'île ne doit pas se refermer
+        menu.exec(self.btn_convertir.mapToGlobal(self.btn_convertir.rect().bottomLeft()))
+        self._dialogue = False
+
+    def _convertir(self, cle, libelle):
+        """Convertit les fichiers déposés (sur le PC, sans IA) ; les originaux ne sont pas touchés."""
+        if not self.fichiers or self.occupee:
+            return
+        fichiers = list(self.fichiers)
+        demande = f"Convertir en {libelle}" if cle in ("png", "jpg", "webp", "pdf") else f"Convertir : {libelle}"
+        self.fermer()
+        self.fil.moi(demande, piece=self._noms(fichiers))
+        self._maj_accueil()
+        self.occupee = True
+        self._statut("Je convertis…", "travail")
+
+        def travail():
+            resultats = []
+            if cle in convertir.GROUPES:
+                try:
+                    resultats.append(convertir.convertir_groupe(fichiers, cle))
+                except ValueError as ex:
+                    resultats.append(f"Erreur : {ex}")
+            else:
+                for c in fichiers:
+                    try:
+                        resultats.append(convertir.convertir(c, cle))
+                    except ValueError as ex:
+                        resultats.append(f"Erreur : {ex}")
+            resume = resultats[0] if len(resultats) == 1 else f"{len(resultats)} fichiers convertis"
+            self.pont.direct.emit(resume, resultats, f"{demande} : " + "\n".join(fichiers), fichiers)
+
+        threading.Thread(target=travail, daemon=True).start()
 
     def _resumer(self):
         """Le bouton « Résumer » : l'IA lit les documents déposés (PDF, Word, texte) et en fait un résumé."""
@@ -1500,6 +1608,11 @@ class Ile(QWidget):
         if not consigne or not self.fichiers or self.occupee:
             return
         fichiers = list(self.fichiers)
+        cle = convertir.cle_depuis_texte(consigne, fichiers)       # « convertis en jpg », « mets ça en pdf »…
+        if cle:
+            self.champ_fich.clear()
+            self._convertir(cle, convertir.LIBELLES[cle])
+            return
         self.champ_fich.clear()
         self.fermer()
         self.envoyer(consigne, fichiers)
@@ -1578,7 +1691,7 @@ class Ile(QWidget):
 
     def _annuler_suppr(self):
         self.btn_suppr.danger = False
-        self.btn_suppr.setText("Supprimer")
+        self.btn_suppr.setText("")
         self.btn_suppr.updateGeometry()
         self.btn_suppr.update()
 
@@ -2062,6 +2175,65 @@ class Ile(QWidget):
         self.btn_envoyer.icone = ui.ICONES["arreter" if en_cours else "envoyer"]
         self.btn_envoyer.setToolTip("Arrêter la demande" if en_cours else "Envoyer")
         self.btn_envoyer.update()
+
+    def _maj_dispo(self, info):
+        """Le veilleur a trouvé une version plus récente : on prévient, sans rien lancer."""
+        self._maj = info
+        texte = f"Dropi {info['version']} est disponible"
+        if self.mode == "repos" and not self.occupee and not self._cachee_plein_ecran:
+            self._statut(texte + "  ·  clique pour installer", "repos", duree=20000)
+            self._toast_maj = True
+            self.mascotte.reagir("curieux", 2.0)
+        self.fil.action(f"{texte} (clique pour installer)", self._installer_maj)
+        self._maj_accueil()
+
+    def _installer_maj(self):
+        """Télécharge le nouveau setup (vérifié), puis le lance : il ferme Dropi, le remplace et le relance."""
+        info = self._maj
+        if not info or self._maj_en_cours:
+            return
+        self._maj_en_cours = True
+        self._statut(f"Mise à jour {info['version']} : téléchargement…", "travail")
+
+        def travail():
+            try:
+                setup = miseajour.telecharger(info, self.pont.moteur.emit)
+                self.pont.maj_prete.emit(str(setup), "")
+            except Exception as ex:
+                self.pont.maj_prete.emit("", f"Mise à jour impossible : {ex}")
+
+        threading.Thread(target=travail, daemon=True).start()
+
+    def _maj_prete(self, setup, erreur):
+        self._maj_en_cours = False
+        if erreur:
+            self._toast(erreur.removeprefix("OK:"), "succes" if erreur.startswith("OK:") else "erreur")
+            return
+        self._statut("Installation de la mise à jour…", "travail")
+        try:
+            miseajour.lancer_installation(setup)
+        except OSError as ex:
+            self._toast(f"Je n'arrive pas à lancer l'installation : {ex}", "erreur")
+            return
+        QTimer.singleShot(600, QApplication.quit)          # l'installateur prend le relais et relance Dropi
+
+    def _chercher_maj(self):
+        """Menu « Vérifier les mises à jour » : réponse tout de suite, même s'il n'y a rien de nouveau."""
+        self._statut("Je cherche une mise à jour…", "travail")
+
+        def travail():
+            try:
+                info = miseajour.disponible()
+                if info:
+                    self._veilleur_maj.prevenu = info["version"]
+                    self.pont.maj.emit(info)
+                else:
+                    self.pont.moteur.emit("")
+                    self.pont.maj_prete.emit("", f"OK:Dropi {VERSION} est à jour.")
+            except Exception:
+                self.pont.maj_prete.emit("", "Je n'arrive pas à joindre GitHub pour l'instant.")
+
+        threading.Thread(target=travail, daemon=True).start()
 
     def _etat_moteur(self, texte):
         """Téléchargement du modèle (premier lancement) ou chargement de l'IA : on le montre sur la goutte."""
