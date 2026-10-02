@@ -1,5 +1,12 @@
-"""Le rangement méthodique : chaque fichier va dans TYPE / SOURCE.
+"""Le rangement : chaque fichier va dans le bon dossier, et le journal note tout.
 
+Deux modes (config.yaml, classement: mode:)
+- « theme » (par défaut) : THÈME / SOUS-THÈME / ANNÉE, voir themes.py. Études > Cours > 2026, Administratif > Impôts > 2026…
+  Dropi lit le nom, la source et le début du contenu ; si c'est flou, le fichier attend dans « À trier » et l'IA
+  locale le classe en tâche de fond.
+- « type » (l'ancien) : TYPE / SOURCE, expliqué ci-dessous.
+
+Mode « type » :
 - le TYPE vient de l'extension (PDF, Word, Bloc-notes, Images…) ;
 - la SOURCE est le site ou l'appli d'où il vient. Quand tu télécharges un fichier, Windows note
   l'adresse du site dans une « étiquette » cachée (Zone.Identifier) : on la lit. Sinon on devine
@@ -14,11 +21,15 @@ import re
 import json
 import shutil
 import datetime
+import queue
 import threading
+import time
+import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
 
 import donnees
+import themes
 
 JOURNAL = donnees.fichier("journal_rangement.json")
 _verrou = threading.Lock()
@@ -71,6 +82,11 @@ PARTIELS = (".crdownload", ".part", ".partial", ".tmp", ".opdownload", ".downloa
 INCONNUE = "Origine inconnue"
 
 CONFIG = {}
+CLASSIFIEUR = None          # fonction(nom, extrait, categories) -> "01 Études/Cours" ou None : l'IA locale (branchée par l'appli)
+SUR_RECLASSE = None         # fonction(nom, nouveau chemin) appelée quand l'IA a rangé un fichier en arrière-plan
+RACINE_PAR_DEFAUT = "~/Documents/Dropi"
+ANCIENS_DOSSIERS = ["~/Documents/Classement", "~/Pictures/Classement", "~/Videos/Classement", "~/Music/Classement",
+                    "~/Downloads/Classement"]
 
 
 def init(config):
@@ -169,15 +185,88 @@ def _nettoyer_nom(nom):
     return re.sub(r'[<>:"/\\|?*]', "-", nom).strip(" .") or INCONNUE
 
 
-def dossier_pour(p):
-    """Où ce fichier doit aller : (dossier, type, source)."""
+def mode():
+    return "type" if str(CONFIG.get("mode", "theme")).lower() in ("type", "ancien") else "theme"
+
+
+def racine():
+    return _chemin(CONFIG.get("racine", RACINE_PAR_DEFAUT))
+
+
+def _date(p):
+    try:
+        return datetime.datetime.fromtimestamp(Path(p).stat().st_mtime)
+    except OSError:
+        return datetime.datetime.now()
+
+
+def extrait(p, limite=3500):
+    """Le début du texte d'un PDF, d'un Word ou d'un fichier texte (pour classer « scan0042.pdf »). Vide si illisible."""
     p = Path(p)
+    ext = p.suffix.lower()
+    try:
+        if not p.is_file() or p.stat().st_size > 40_000_000 or ext not in themes.EXT_LISIBLES:
+            return ""
+        if ext == ".pdf":
+            from pypdf import PdfReader
+            lecteur = PdfReader(str(p))
+            if lecteur.is_encrypted:
+                return ""
+            texte = ""
+            for page in lecteur.pages[:4]:
+                texte += " " + (page.extract_text() or "")
+                if len(texte) > limite:
+                    break
+            return " ".join(texte.split())[:limite]
+        if ext == ".docx":
+            with zipfile.ZipFile(p) as z:
+                xml = z.read("word/document.xml").decode("utf-8", "ignore")
+            return " ".join(re.sub(r"<[^>]+>", " ", xml.replace("</w:p>", " ")).split())[:limite]
+        brut = p.read_bytes()[:limite * 3]
+        if b"\x00" in brut[:2000]:
+            return ""
+        return " ".join(brut.decode("utf-8", "ignore").split())[:limite]
+    except Exception:
+        return ""
+
+
+_cache_classes = {}
+
+
+def classer(p, avec_contenu=True):
+    """(résultat de themes.classer, source, extrait). Le contenu n'est lu que si le nom et la source ne suffisent pas.
+    Mis en cache (un fichier déposé est classé pour l'affichage puis pour le rangement : on ne le relit pas deux fois)."""
+    p = Path(p)
+    try:
+        st = p.stat()
+        cle = (str(p), st.st_mtime_ns, st.st_size, avec_contenu)
+    except OSError:
+        cle = None
+    if cle and cle in _cache_classes:
+        return _cache_classes[cle]
+    source = source_de(p)
+    resultat = themes.classer(p, source)
+    texte = ""
+    if avec_contenu and resultat["confiance"] != "forte" and resultat["lisible"]:
+        texte = extrait(p)
+        if texte:
+            resultat = themes.classer(p, source, texte)
+    if cle:
+        if len(_cache_classes) > 400:
+            _cache_classes.clear()
+        _cache_classes[cle] = (resultat, source, texte)
+    return resultat, source, texte
+
+
+def dossier_pour(p):
+    """Où ce fichier doit aller : (dossier, type ou thème, source)."""
+    p = Path(p)
+    if mode() == "theme":
+        resultat, source, _ = classer(p)
+        return themes.dossier(racine(), resultat, _date(p)), themes.nom_affiche(resultat), source
     type_ = type_de(p)
     source = source_de(p)
-    try:
-        date = datetime.datetime.fromtimestamp(p.stat().st_mtime)
-    except OSError:
-        date = datetime.datetime.now()
+    date = _date(p)
     modele = CONFIG.get("modele", "{source}")
     sous = modele.format(source=_nettoyer_nom(source), annee=date.year, mois=f"{date.year}-{date.month:02d}")
     racine = _chemin(_types()[type_]["dossier"])
@@ -201,8 +290,13 @@ def joli(chemin):
 
 
 def court(dossier):
-    """Juste l'essentiel : PDF › Gmail"""
+    """Juste l'essentiel : Études › Cours › 2026 (ou PDF › Gmail en mode « type »)."""
     dossier = Path(dossier)
+    try:
+        reste = dossier.relative_to(racine())
+        return " › ".join([themes.NOMS_THEMES.get(reste.parts[0], reste.parts[0]), *reste.parts[1:]]) if reste.parts else "Dropi"
+    except ValueError:
+        pass
     for nom, regle in _types().items():
         try:
             reste = dossier.relative_to(_chemin(regle["dossier"]))
@@ -230,18 +324,41 @@ def place_libre(dossier, nom):
     return dest
 
 
-def deplacer(src, dossier, nom=None):
+def _retirer_vides(dossier):
+    """Après un déplacement : les dossiers devenus vides (2026, puis Cours…) disparaissent, sans quitter la racine."""
+    dossier, base = Path(dossier), racine()
+    while dossier != base and base in dossier.parents:
+        try:
+            dossier.rmdir()
+        except OSError:
+            return
+        dossier = dossier.parent
+
+
+def deplacer(src, dossier, nom=None, **infos):
     """Déplace src dans dossier (sans rien écraser) et note le trajet dans le journal."""
     src = Path(src)
     dest = place_libre(Path(dossier), nom or src.name)
     shutil.move(str(src), str(dest))
-    noter(src, dest)
+    noter(src, dest, **infos)
+    _retirer_vides(src.parent)
     return dest
 
 
 def ranger(p):
-    """Range un fichier à sa place méthodique. Renvoie (nouveau chemin, type, source)."""
+    """Range un fichier à sa place. Renvoie (nouveau chemin, type ou thème, source)."""
     p = Path(p)
+    if mode() == "theme":
+        resultat, source, texte = classer(p)
+        dossier = themes.dossier(racine(), resultat, _date(p))
+        etiquette = themes.nom_affiche(resultat)
+        if p.parent == dossier:
+            return p, etiquette, source
+        dest = deplacer(p, dossier, raison=resultat["raison"])
+        if (resultat["theme"], resultat["sous"]) == themes.A_TRIER and texte and ia_active():
+            _file_ia.put((str(dest), texte))           # l'IA le regardera en tâche de fond
+            _demarrer_ia()
+        return dest, etiquette, source
     dossier, type_, source = dossier_pour(p)
     if p.parent == dossier:
         return p, type_, source
@@ -323,6 +440,7 @@ def annuler_dernier():
                 continue
             dest = place_libre(avant.parent, avant.name)
             shutil.move(str(apres), str(dest))
+            _retirer_vides(apres.parent)
             e["annule"] = True
             journal.append({"date": datetime.datetime.now().isoformat(timespec="seconds"),
                             "avant": str(apres), "apres": str(dest), "annulation": True})
@@ -337,6 +455,98 @@ def contexte(n=8):
               for e in derniers(n)]
     return ("\n\nDerniers fichiers que tu as déplacés (ils sont maintenant à ces chemins) :\n" + "\n".join(lignes)) \
         if lignes else ""
+
+
+# ------------------------------------------------------------------ l'IA classe en arrière-plan
+
+_file_ia = queue.Queue()
+_fil_ia = None
+
+
+def ia_active():
+    return CLASSIFIEUR is not None and CONFIG.get("ia", True) not in (False, "non", "false")
+
+
+def _demarrer_ia():
+    global _fil_ia
+    if _fil_ia is None or not _fil_ia.is_alive():
+        _fil_ia = threading.Thread(target=_boucle_ia, daemon=True)
+        _fil_ia.start()
+
+
+def _boucle_ia():
+    """Un fichier à la fois, quand le moteur d'IA n'est pas occupé à répondre à quelqu'un."""
+    while True:
+        try:
+            chemin, texte = _file_ia.get(timeout=120)
+        except queue.Empty:
+            return
+        p = Path(chemin)
+        if not p.exists() or CLASSIFIEUR is None:
+            continue
+        try:
+            choix = CLASSIFIEUR(p.name, texte, themes.categories())
+        except Exception:
+            choix = None
+        cible = themes.depuis_categorie(choix) if choix else None
+        if not cible or cible == themes.A_TRIER:
+            continue                                   # l'IA ne sait pas non plus : il reste dans « À trier »
+        resultat = {"theme": cible[0], "sous": cible[1], "raison": "IA"}
+        try:
+            dest = deplacer(p, themes.dossier(racine(), resultat, _date(p)), raison="IA")
+        except OSError:
+            continue
+        if SUR_RECLASSE:
+            try:
+                SUR_RECLASSE(dest.name, dest)
+            except Exception:
+                pass
+
+
+# ------------------------------------------------------------------ réorganiser l'existant
+
+def _fichiers_a_reorganiser(dossiers):
+    for d in dossiers:
+        racine_d = _chemin(d)
+        if not racine_d.is_dir():
+            continue
+        for p in racine_d.rglob("*"):
+            if p.is_file() and not est_partiel(p) and not str(p).startswith(str(racine())):
+                yield p
+
+
+def plan_reorganisation(dossiers=None):
+    """Ce que ferait la réorganisation : [(fichier, dossier d'arrivée, étiquette)]. Ne déplace rien.
+    Par défaut : l'ancien classement (« Classement » dans Documents, Images…), qu'on range dans les nouveaux thèmes."""
+    plan = []
+    for p in _fichiers_a_reorganiser(dossiers or ANCIENS_DOSSIERS):
+        resultat, _, _ = classer(p)
+        plan.append((p, themes.dossier(racine(), resultat, _date(p)), themes.nom_affiche(resultat)))
+    return plan
+
+
+def appliquer_plan(plan, sur_progres=None):
+    """Déplace tout (sans rien écraser, avec le journal). Renvoie (déplacés, erreurs). Nettoie les dossiers vides."""
+    faits, erreurs, dossiers = 0, [], set()
+    for i, (p, dossier, _) in enumerate(plan):
+        try:
+            if Path(p).exists() and Path(p).parent != dossier:
+                dossiers.add(Path(p).parent)
+                deplacer(p, dossier, raison="réorganisation")
+                faits += 1
+        except OSError as ex:
+            erreurs.append(f"{Path(p).name} : {ex}")
+        if sur_progres and i % 20 == 0:
+            sur_progres(i, len(plan))
+    proteges = {Path.home(), *(Path.home() / n for n in ("Documents", "Pictures", "Videos", "Music", "Downloads", "Desktop"))}
+    for d in sorted(dossiers, key=lambda x: len(x.parts), reverse=True):     # les dossiers devenus vides disparaissent
+        while d not in proteges and d.parent != d:
+            try:
+                d.rmdir()
+            except OSError:
+                break
+            d = d.parent
+    return faits, erreurs
 
 
 # ------------------------------------------------------------------ téléchargements

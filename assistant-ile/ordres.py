@@ -15,7 +15,7 @@ def simplifier(texte):
     """Minuscules, sans accents ni politesse : « Peux-tu ouvrir Excel, s'il te plaît ? » → « ouvrir excel »."""
     t = unicodedata.normalize("NFD", texte.lower().replace("’", "'"))
     t = "".join(c for c in t if unicodedata.category(c) != "Mn")
-    t = re.sub(r"-(moi|toi|tu|le|la|les|nous|vous)\b", r" \1", t)
+    t = re.sub(r"-(moi|toi|tu|il|elle|on|je|ce|le|la|les|nous|vous)\b", r" \1", t)
     t = re.sub(r"[\s.!?…]+$", "", t).strip()
     t = re.sub(r"^(?:s'il te plait|stp|dis(?: moi)?|hey|ok|bon|alors|plop)[, ]+", "", t)
     t = re.sub(r"[, ]+(?:s'il te plait|stp|merci)$", "", t)
@@ -69,7 +69,14 @@ MOTIFS = [
     (r"range (?:mes |les |le dossier )?telechargements", lambda m: ("ile", "_ranger_telechargements")),
     (r"range (?:mon |le )?bureau", lambda m: _outil("ranger_dossier", dossier="~/Desktop")),
     (r"annule(?: (?:ca|le rangement|le dernier rangement))?", lambda m: _outil("annuler_rangement")),
+    (r"(?:re)?(?:organise|classe)(?: moi)? (?:tout )?(?:mon|mes|le|les) (?:ancien )?(?:classement|dossiers|fichiers|documents)(?: par theme)?|range(?: moi)? (?:mon|le) classement"
+     r"|(?:re)?organise tout|nouveau classement|passe(?: mon classement)? en theme", lambda m: ("ile", "_reorganiser")),
     (r"fais(?: moi)? de la place|libere de la place|nettoie (?:mon |le )?(?:disque|pc)", lambda m: ("ile", "_faire_de_la_place")),
+    # ---- tableau de bord (Dropi en plein écran)
+    (r"(?:ouvre|affiche|montre(?: moi)?|lance|mets?|passe en|va sur)? ?(?:le |mon |en |au )?(?:tableau de bord|dashboard|plein ecran|mode bureau|grand ecran)"
+     r"|agrandis(?: toi)?|mets? toi en grand", lambda m: ("ile", "_ouvrir_tableau")),
+    (r"(?:ferme|reduis|quitte|enleve)(?: le| la)? (?:tableau de bord|dashboard|plein ecran)|mode goutte|redeviens une goutte|reduis toi",
+     lambda m: ("ile", "_fermer_tableau")),
     # ---- jouer avec Dropi (les mini-jeux)
     (r"(?:on )?(?:joue|jouons|jouer)(?: (?:au|a la|aux|a|un|une|le|la))? ?(?:morpion|tic tac toe|tictactoe|croix et ronds)(?: avec moi| ensemble| contre moi)?"
      r"|(?:une )?partie de (?:morpion|tic tac toe)|morpion", lambda m: ("ile", "_jeu_morpion")),

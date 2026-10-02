@@ -54,7 +54,7 @@ ICONES = {
 ICONES.update(note=chr(0xEC4F), pause=chr(0xE769), cle=chr(0xE8D7), regenerer=chr(0xE72C), copier=chr(0xE8C8),
               arreter=chr(0xE71A), camera=chr(0xE722), minuteur=chr(0xE916), cloche=chr(0xEA8F), cadenas=chr(0xE72E),
               eclair=chr(0xE945), pc=chr(0xE7F8), applis=chr(0xE71D), message=chr(0xE8BD), code=chr(0xE943),
-              tableau=chr(0xE9D2), document=chr(0xE8A5), video=chr(0xE714), oeil=chr(0xE7B3))
+              tableau=chr(0xE9D2), plein_ecran=chr(0xE740), document=chr(0xE8A5), video=chr(0xE714), oeil=chr(0xE7B3))
 
 
 def police(taille, gras=False, famille="Segoe UI Variable Text"):

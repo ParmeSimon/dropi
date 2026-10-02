@@ -5,6 +5,7 @@ import threading
 import time
 
 import moteur
+import themes
 import tools
 import memoire
 import classement
@@ -232,6 +233,42 @@ class Cerveau:
             reponse += f"\n\n({lu})"
         self.noter(f"Résume le document {chemin}", reponse)
         return reponse
+
+    def classer_document(self, nom, extrait, categories):
+        """Dans quelle catégorie ranger ce document ? Renvoie « 01 Études/Cours » (ou None). Une sortie contrainte :
+        le modèle ne peut répondre que par l'une des catégories. Appelé en tâche de fond par classement.py."""
+        while self.moteur._occupe:                       # quelqu'un discute avec Dropi : on lui laisse le moteur
+            time.sleep(2)
+        corps = {
+            "messages": [
+                {"role": "system", "content": "Tu ranges des documents personnels dans la catégorie qui leur correspond le mieux."},
+                {"role": "user", "content": f"Catégories (avec ce qu'on y range) :\n{themes.legende()}\n\n"
+                 f"Nom du fichier : {nom}\n\nDébut du contenu :\n{extrait[:1800]}\n\n"
+                 "Dans quelle catégorie ranger ce document ? Choisis « 99 À trier » s'il n'a pas de sens ou si aucune catégorie ne convient vraiment."}],
+            "temperature": 0.1, "max_tokens": 60, "stream": False,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "response_format": {"type": "json_schema", "json_schema": {"name": "classement", "strict": True, "schema": {
+                "type": "object", "properties": {
+                    "categorie": {"type": "string", "enum": list(categories)},
+                    "confiance": {"type": "string", "enum": ["sûr", "probable", "incertain"]}},
+                "required": ["categorie", "confiance"], "additionalProperties": False}}}}
+        self.moteur.en_cours(True)
+        try:
+            connexion = self.moteur.connexion()
+            connexion.request("POST", "/v1/chat/completions", json.dumps(corps), {"Content-Type": "application/json"})
+            reponse = connexion.getresponse()
+            donnees = json.loads(reponse.read())
+            contenu = donnees["choices"][0]["message"]["content"]
+            reponse_json = json.loads(contenu)
+            self.dernier_classement = reponse_json                   # pour les tests et le diagnostic
+            categorie = reponse_json["categorie"] if reponse_json.get("confiance") != "incertain" else None
+        except Exception:
+            return None
+        finally:
+            self.moteur.en_cours(False)
+            if self._cle_base:                           # la lecture des consignes du chat est remise en place
+                threading.Thread(target=self.moteur.restaurer_cache, args=(self._cle_base,), daemon=True).start()
+        return categorie if categorie in categories else None
 
     def noter(self, demande, resultat):
         """Garde la trace d'une action faite sans l'IA, pour qu'elle puisse en reparler ensuite."""

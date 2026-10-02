@@ -25,37 +25,48 @@ prechauffer_ia: true
 whisper_modele: small
 langue: fr
 
-# ---------- Rangement méthodique ----------
-# Chaque fichier va dans le dossier de son TYPE, puis de sa SOURCE (le site ou l'appli d'où il vient).
-#   facture.pdf reçue sur Gmail     -> Documents/Classement/PDF/Gmail/facture.pdf
-#   image enregistrée depuis Discord -> Images/Classement/Discord/image.png
-#   Capture d'écran …               -> Images/Classement/Captures d'écran/…
-# Tout est noté dans journal_rangement.json : l'assistant sait toujours où il a mis tes fichiers.
+# ---------- Rangement par thème ----------
+# Chaque fichier va dans THÈME / SOUS-THÈME / ANNÉE, sous le dossier « racine » :
+#   avis d'imposition (PDF)     -> Documents/Dropi/03 Administratif/Impôts/2026/
+#   chapitre-3.pdf (Moodle)     -> Documents/Dropi/01 Études/Cours/2026/
+#   capture d'écran             -> Documents/Dropi/04 Perso/Captures d'écran/2026/
+# Dropi lit le nom du fichier, le site d'où il vient et le début de son contenu (PDF, Word, texte). Si c'est encore
+# flou (ex : scan0042.pdf), le fichier attend dans « 99 À trier » et l'IA locale le classe en tâche de fond.
+# Tout est noté dans journal_rangement.json : « annule » défait le dernier déplacement.
+# « Réorganise mon classement » range d'un coup l'ancien classement (Documents/Classement…) dans les thèmes.
 classement:
-  # Sous-dossiers dans le dossier du type. Tu peux ajouter l'année ou le mois :
-  #   "{source}"  |  "{source}/{annee}"  |  "{source}/{mois}"
-  modele: "{source}"
-  # Pour changer un dossier ou ajouter un type (les autres gardent leur réglage par défaut) :
-  types:
-    PDF: {dossier: ~/Documents/Classement/PDF, extensions: [.pdf]}
-    Word: {dossier: ~/Documents/Classement/Word, extensions: [.doc, .docx, .odt, .rtf]}
-    Bloc-notes: {dossier: ~/Documents/Classement/Bloc-notes, extensions: [.txt, .md, .log]}
-    Images: {dossier: ~/Pictures/Classement}
+  mode: theme                       # theme (nouveau) | type (l'ancien : PDF/Gmail…)
+  racine: ~/Documents/Dropi
+  ia: true                          # false : jamais d'IA pour classer (les fichiers flous restent dans « À trier »)
   # Noms lisibles pour tes sites (les plus connus sont déjà reconnus : Gmail, Discord, WhatsApp…)
   sources:
     mail.google.com: Gmail
     # monlycee.net: Lycée
+  # Mode « type » seulement : sous-dossiers et dossiers par type
+  # modele: "{source}"
+  # types:
+  #   PDF: {dossier: ~/Documents/Classement/PDF, extensions: [.pdf]}
 
 # ---------- Téléchargements ----------
 # Quand un téléchargement se termine, la goutte te propose où le ranger.
 #   auto     : Dropi range chaque fichier tout seul, un par un, 10 secondes après la fin du téléchargement
-#              (dossier du TYPE puis de la SOURCE, voir « Rangement méthodique » ; « annule » remet tout en place)
+#              (dans son thème, voir « Rangement par thème » ; « annule » remet tout en place)
 #   ouvrir   : le panneau s'ouvre tout seul avec le fichier (Résumer, Ranger ici, Ouvrir…), sans voler le clavier
 #   proposer : elle te montre l'endroit sur la goutte, tu cliques pour ouvrir le panneau
 #   rien     : elle ne surveille pas
 telechargements:
   mode: auto
   dossier: ~/Downloads
+
+# ---------- Tableau de bord ----------
+# Dropi en plein écran, à la place du bureau et de la barre des tâches : tes applis, tes jeux, tes fichiers rangés,
+# les fenêtres ouvertes. On l'ouvre avec le bouton « plein écran » de la goutte, le raccourci, ou « tableau de bord ».
+# La pastille du haut (ou Échap) le referme dans la goutte.
+tableau:
+  raccourci: ctrl+alt+d            # ouvre / ramène devant / réduit. « non » pour ne pas réserver de raccourci
+  au_lancement: comme avant        # comme avant (rouvert s'il était ouvert) | oui (toujours) | non (jamais)
+  masquer_barre_windows: true      # tant qu'il est ouvert, la barre des tâches de Windows se cache toute seule
+                                   # (elle revient si tu pousses la souris en bas, et à la fermeture)
 
 # ---------- Comportement ----------
 # En jeu ou devant une vidéo en plein écran, la goutte se cache (elle revient après).

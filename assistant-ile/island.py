@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 from PySide6.QtCore import (Qt, QEvent, QRectF, QPointF, QSizeF, QTimer, QVariantAnimation,
-                            QEasingCurve, Signal, QObject, QSettings, QMimeData, QBuffer)
+                            QEasingCurve, Signal, QObject, QSettings, QMimeData, QBuffer, QAbstractNativeEventFilter)
 from PySide6.QtGui import (QPainter, QColor, QPen, QLinearGradient, QConicalGradient, QCursor,
                            QFontMetrics, QPainterPath, QPixmap, QIcon)
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QMenu, QFileDialog
@@ -44,6 +44,7 @@ import messagerie
 import ocr
 import convertir
 import pressepapier
+import systeme
 import miseajour
 from version import VERSION
 import partie
@@ -125,7 +126,7 @@ def plein_ecran_actif(moi=0):
     u32.MonitorFromWindow.restype = wintypes.HMONITOR
     u32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
     hwnd = u32.GetForegroundWindow()
-    if not hwnd or hwnd == moi:
+    if not hwnd or hwnd == moi or systeme.est_a_nous(hwnd):
         return False
     classe = ctypes.create_unicode_buffer(64)
     u32.GetClassNameW(wintypes.HWND(hwnd), classe, 64)
@@ -172,6 +173,9 @@ class Pont(QObject):
     moteur = Signal(str)              # le moteur d'IA télécharge ou charge quelque chose ("" : fini)
     maj = Signal(object)              # une mise à jour de Dropi est disponible (la release GitHub)
     maj_prete = Signal(str, str)      # la mise à jour est téléchargée : chemin du setup, ou message d'erreur
+    reclasse = Signal(str, str)       # l'IA a rangé un fichier en arrière-plan : nom, nouveau dossier
+    plan = Signal(object)             # le plan de réorganisation est calculé : [(fichier, dossier, étiquette)]
+    reorganise = Signal(int, str)     # la réorganisation est faite : fichiers déplacés, erreurs
     mail = Signal(str)                # l'essai de connexion à la messagerie est fini : "" ou l'explication de l'échec
 
 
@@ -249,6 +253,9 @@ class Ile(QWidget):
         self._proposes = []
         self._toast_telechargement = False
         self._toast_maj = False
+        self.tableau, self.transition, self._en_transition = None, None, False
+        self._fil_prete = False                      # le fil de la conversation est dans le tchat du tableau de bord
+        self._barre_etait_masquee = None             # l'état de la barre des tâches avant qu'on y touche
         self._maj, self._maj_en_cours = None, False
         self._carte_nettoyage = None
         self._mode_telechargements = str((config.get("telechargements") or {}).get("mode", "auto"))
@@ -289,6 +296,12 @@ class Ile(QWidget):
         self.pont.partiel.connect(self._texte_partiel)
         self.pont.moteur.connect(self._etat_moteur)
         self.pont.maj.connect(self._maj_dispo)
+        self.pont.reclasse.connect(self._reclasse)
+        self.pont.plan.connect(self._plan_pret)
+        self.pont.reorganise.connect(self._reorganise_fini)
+        # l'IA locale classe en tâche de fond les fichiers que les règles ne savent pas placer
+        classement.CLASSIFIEUR = self.cerveau.classer_document
+        classement.SUR_RECLASSE = lambda nom, dest: self.pont.reclasse.emit(nom, classement.court(Path(dest).parent))
         self.pont.maj_prete.connect(self._maj_prete)
         # mises à jour : seulement pour l'appli installée (Dropi.exe), sauf si config.yaml le demande (mise_a_jour: oui)
         reglage_maj = str(config.get("mise_a_jour", "prevenir")).lower()
@@ -351,6 +364,9 @@ class Ile(QWidget):
         tete, self.vue_disc, self.titre_disc = self._entete("Dropi")
         nouveau = ui.Bouton("nouveau", info="Nouvelle conversation")
         nouveau.clicked.connect(self._reset)
+        grand = ui.Bouton("plein_ecran", info="Tableau de bord : Dropi en plein écran")
+        grand.clicked.connect(self._ouvrir_tableau)
+        tete.addWidget(grand)
         jouer = ui.Bouton("manette", info="Jouer avec Dropi")
         jouer.clicked.connect(lambda: self._jeux())
         reduire = ui.Bouton("reduire", info="Réduire (Échap)")
@@ -754,7 +770,14 @@ class Ile(QWidget):
                 "mail": self.page_mail, "jeux": self.page_jeux}.get(mode)
 
     def _aller(self, mode):
+        if mode == "discussion" and self._tableau_devant() and not self.isVisible():
+            self.tableau.ouvrir_chat()               # en plein écran, on discute dans le tchat du tableau de bord
+            return
+        if mode == "discussion":
+            self._reprendre_fil()
         self.mode = mode
+        if mode != "repos" and not self.isVisible() and not self._cachee_plein_ecran:
+            self.show()                              # un panneau de la goutte doit s'ouvrir : elle réapparaît
         for m in PANNEAUX:
             if m != mode:
                 self._page(m).hide()
@@ -768,6 +791,8 @@ class Ile(QWidget):
             self._veille.start()
         else:
             self._veille.stop()
+            if self.tableau is not None:             # panneau refermé : en plein écran, la goutte s'efface de nouveau
+                QTimer.singleShot(520, self._maj_visibilite)
         self._morph()
 
     def _morph(self):
@@ -880,6 +905,8 @@ class Ile(QWidget):
         for vue in (self.vue_disc, self.vue_fich, self.vue_cle, self.vue_mail, self.vue_accueil):
             if vue.isVisible():
                 vue.update()
+        if self.tableau is not None and self.tableau.isVisible() and self.tableau.coin.vue is not None:
+            self.tableau.coin.vue.update()           # la mascotte du tableau de bord vit (respire, cligne, te regarde)
 
         agite = (self._libre or self.anim.state() == QVariantAnimation.Running or not self._ecrase.calme()
                  or self.mascotte.agite() or self.mode == "survol" or lueur)
@@ -972,6 +999,8 @@ class Ile(QWidget):
                 self.mascotte.reagir("rire", 1.6)
 
     def _ancre_mascotte(self):
+        if not self.isVisible() and self.tableau is not None and self.tableau.isVisible():
+            return self.tableau.coin.centre_global()
         if self.mode == "discussion" and self.vue_disc.isVisible():
             return self.vue_disc.centre_global()
         if self.mode == "fichiers" and self.vue_fich.isVisible():
@@ -1008,6 +1037,8 @@ class Ile(QWidget):
 
     # ================================================================ dessin
     def paintEvent(self, _):
+        if self._en_transition:
+            return
         geo = self._geo or self._calculer_geo()
         if not geo:
             return
@@ -1223,6 +1254,8 @@ class Ile(QWidget):
         if duree:
             self._fin_toast.start(duree)
         self.titre_disc.setText(texte or "Dropi")
+        if self.tableau is not None and self.tableau.isVisible():
+            self.tableau.dire(texte, etat)           # en plein écran, c'est la bulle de la mascotte qui le dit
         self._maj_titre_fichiers()
         if self.mode == "repos":
             self._morph()
@@ -1383,6 +1416,10 @@ class Ile(QWidget):
         if self._ia_en_cours:
             menu.addAction("Arrêter la demande en cours", self._arreter)
             menu.addSeparator()
+        if self.tableau is not None and self.tableau.isVisible():
+            menu.addAction("Réduire le tableau de bord", self._fermer_tableau)
+        else:
+            menu.addAction("Tableau de bord (plein écran)", self._ouvrir_tableau)
         menu.addAction("Nouvelle conversation", self._reset)
         menu.addAction("Replacer en haut", self._replacer)
         menu.addAction("Lire du texte à l'écran", self._capturer_texte)
@@ -1521,11 +1558,12 @@ class Ile(QWidget):
             if w:
                 w.deleteLater()
         lieux = []
-        for c in self.fichiers:
+        for c in self.fichiers[:30]:
             try:
                 lieux.append(classement.court_pour(c))
             except OSError:
                 lieux.append("")
+        lieux += [""] * (len(self.fichiers) - len(lieux))
         for c, lieu in list(zip(self.fichiers, lieux))[:FICHIERS_VISIBLES]:
             ligne = ui.LigneFichier(c, lieu)
             ligne.retire.connect(self._retirer_fichier)
@@ -1739,6 +1777,161 @@ class Ile(QWidget):
         self.fichiers = fichiers
         self._action_directe("ranger")
 
+    # ================================================================ tableau de bord
+    def _zone_tableau(self):
+        zone = self.ecran.geometry()
+        return zone.adjusted(0, 0, 0, -1)        # un pixel de moins : Windows ne le prend pas pour un jeu en plein écran
+
+    def _creer_tableau(self):
+        import tableau as module_tableau
+        import transition as module_transition
+        self.tableau = module_tableau.Tableau(self.mascotte)
+        self.tableau.reduire.connect(self._fermer_tableau)
+        self.tableau.jeu.connect(self._lancer_jeu)
+        self.tableau.demande.connect(self._demande_tableau)
+        self.tableau.veut_fil.connect(self._preter_fil)
+        self.tableau.actif.connect(lambda _: self._maj_visibilite())
+        self.tableau.chat.arreter.connect(self._arreter)
+        self.tableau.chat.nouvelle.connect(self._reset)
+        self.tableau.chat.micro.pressed.connect(self._micro_debut)
+        self.tableau.chat.micro.released.connect(self._micro_fin)
+        self.transition = module_transition.Transition(self.mascotte)
+
+    def _ouvrir_tableau(self):
+        """La goutte file au milieu, Plop saute, et la bulle s'ouvre en grand : le tableau de bord."""
+        if self._en_transition or self.occupee and self.mode != "repos":
+            return
+        if self.tableau is None:
+            self._creer_tableau()
+        if self.tableau.isVisible():              # déjà ouvert (derrière d'autres fenêtres) : on le ramène devant
+            self.fermer()
+            self.tableau.raise_()
+            self.tableau.activateWindow()
+            systeme.activer(int(self.tableau.winId()))
+            return
+        self._aller("repos")
+        zone = self._zone_tableau()
+        self.tableau.setGeometry(zone)
+        self.tableau.rafraichir()
+        photo = self.tableau.grab()               # ce que le liquide révélera en s'étalant
+        depart = self.mapToGlobal(self._centre_ancre().toPoint())
+        plop = zone.topLeft() + self.tableau.centre_plop().toPoint()                   # Plop va dans son coin, en haut à gauche
+        self._en_transition = True
+        self.show()
+        self.update()
+        self.mascotte.reagir("content", 1.2)
+        QTimer.singleShot(300, lambda: self.mascotte.reagir("surpris", 0.5))
+
+        def plein():
+            self.tableau.show()
+            self.tableau.raise_()
+            self.tableau.activateWindow()
+            self.raise_()                         # la goutte reste par-dessus le tableau de bord
+            self._masquer_barre(True)
+
+        def fin():
+            self._en_transition = False
+            self.reglages.setValue("tableau", True)
+            self.update()
+            self._maj_visibilite()                # en plein écran, plus de goutte en haut : Dropi est dans le tableau de bord
+
+        self.transition.jouer(zone, depart, plop, True, plein, fin, photo)
+
+    def _fermer_tableau(self):
+        """La pastille du haut : le tableau de bord se referme dans la goutte."""
+        if self._en_transition or self.tableau is None or not self.tableau.isVisible():
+            return
+        zone = self.tableau.geometry()
+        self.tableau.fermer_chat()
+        self._reprendre_fil()
+        photo = self.tableau.grab()
+        self._en_transition = True
+        self.show()                               # la goutte revient (elle était cachée en plein écran)
+        arrivee = self.mapToGlobal(self._centre_ancre().toPoint())
+        plop = zone.topLeft() + self.tableau.centre_plop().toPoint()
+        self.update()
+
+        def plein():
+            self.tableau.hide()
+            self._masquer_barre(False)
+
+        def fin():
+            self._en_transition = False
+            self.reglages.setValue("tableau", False)
+            self.mascotte.sauter(0.6)
+            self.update()
+
+        self.transition.jouer(zone, arrivee, plop, False, plein, fin, photo)
+
+    def _basculer_tableau(self):
+        """Le raccourci clavier : ouvre le tableau de bord, le ramène devant, ou le réduit s'il est déjà devant."""
+        if self.tableau is not None and self.tableau.isVisible() and self.tableau.isActiveWindow():
+            self._fermer_tableau()
+        else:
+            self._ouvrir_tableau()
+
+    def _demande_tableau(self, texte):
+        """Une phrase tapée dans la recherche ou le tchat du tableau de bord : Dropi répond dans le tchat."""
+        self.tableau.ouvrir_chat()
+        self.envoyer(texte)
+
+    def _tableau_devant(self):
+        """Le tableau de bord est-il affiché ET au premier plan (aucune autre appli par-dessus) ?"""
+        if self.tableau is None or not self.tableau.isVisible():
+            return False
+        if self.tableau.isActiveWindow():
+            return True
+        try:
+            return systeme.est_a_nous(systeme.u32.GetForegroundWindow())
+        except Exception:
+            return False
+
+    def _maj_visibilite(self):
+        """En plein écran, la goutte du haut disparaît (Dropi est la mascotte du tableau de bord). Elle revient dès
+        qu'une autre appli passe devant, ou qu'un de ses panneaux doit s'ouvrir (mot de passe, mini-jeux…)."""
+        if self._en_transition or self._cachee_plein_ecran:
+            return
+        cacher = self._tableau_devant() and self.mode == "repos" and not self._libre and not self._glisse
+        if cacher and self.isVisible():
+            self.hide()
+        elif not cacher and not self.isVisible():
+            self.show()
+
+    def _preter_fil(self):
+        """Le tchat du tableau de bord s'ouvre : il affiche le fil de la conversation (le même, pas une copie)."""
+        if not self._fil_prete:
+            self._fil_prete = True
+            self.tableau.chat.accueillir(self.fil)
+
+    def _reprendre_fil(self):
+        """Le fil revient dans le panneau de la goutte."""
+        if self._fil_prete:
+            self._fil_prete = False
+            self.tableau.chat.rendre()
+            self.page_discussion.layout().insertWidget(1, self.fil, 1)
+            self._maj_accueil()
+
+    def _masquer_barre(self, masquer):
+        """Tableau de bord ouvert : la barre des tâches de Windows passe en masquage automatique. On la remet après."""
+        if not (self.config.get("tableau") or {}).get("masquer_barre_windows", True):
+            return
+        try:
+            if masquer:
+                if self._barre_etait_masquee is None:
+                    self._barre_etait_masquee = systeme.barre_windows_masquee()
+                    self.reglages.setValue("barre_a_remettre", not self._barre_etait_masquee)
+                systeme.masquer_barre_windows(True)
+            elif self._barre_etait_masquee is not None:
+                systeme.masquer_barre_windows(self._barre_etait_masquee)
+                self._barre_etait_masquee = None
+                self.reglages.setValue("barre_a_remettre", False)
+        except Exception:
+            pass
+
+    def quitter_proprement(self):
+        """À la fermeture de Dropi : la barre des tâches retrouve son réglage."""
+        self._masquer_barre(False)
+
     def _verifier_plein_ecran(self):
         plein = plein_ecran_actif(int(self.winId()))
         if plein and not self._cachee_plein_ecran and self.mode == "repos" and not self._libre and not self._glisse:
@@ -1749,6 +1942,7 @@ class Ile(QWidget):
             self._cachee_plein_ecran = False
             self.show()
             self._horloge.start()
+        self._maj_visibilite()
 
     def _verifier_telechargements(self):
         """Toutes les 2 s : un nouveau fichier dans Téléchargements dont la taille ne bouge plus = fini."""
@@ -2110,6 +2304,8 @@ class Ile(QWidget):
         vide = self.fil.vide()
         self.accueil.setVisible(vide)
         self.fil.setVisible(not vide)
+        if self._fil_prete:
+            self.tableau.chat.maj()
 
     def envoyer(self, texte, fichiers=None, resume=False):
         texte = texte.strip()
@@ -2170,6 +2366,72 @@ class Ile(QWidget):
         self.btn_envoyer.icone = ui.ICONES["arreter" if en_cours else "envoyer"]
         self.btn_envoyer.setToolTip("Arrêter la demande" if en_cours else "Envoyer")
         self.btn_envoyer.update()
+        if self.tableau is not None:
+            self.tableau.chat.occuper(en_cours)
+
+    def _reclasse(self, nom, lieu):
+        """L'IA a trouvé la place d'un fichier qui attendait dans « À trier »."""
+        self.fil.action(f"{nom} rangé dans {lieu}").terminer(True)
+        if self.mode == "repos" and not self.occupee:
+            self._toast(f"{nom}  →  {lieu}", "succes")
+
+    def _reorganiser(self):
+        """« Réorganise mon classement » : calcule le plan, le montre, et ne déplace rien sans ton clic."""
+        if self.occupee:
+            return
+        self.fil.moi("Réorganise mon classement")
+        self._maj_accueil()
+        self.occupee = True
+        self._statut("Je regarde ton classement…", "travail")
+
+        def travail():
+            try:
+                self.pont.plan.emit(classement.plan_reorganisation())
+            except Exception as ex:
+                self.pont.plan.emit(str(ex))
+
+        threading.Thread(target=travail, daemon=True).start()
+
+    def _plan_pret(self, plan):
+        self.occupee = False
+        self._statut("")
+        if isinstance(plan, str):
+            self.fil.erreur(f"Je n'ai pas pu lire ton classement : {plan}")
+            return
+        a_deplacer = [(p, d, e) for p, d, e in plan if Path(p).parent != d]
+        if not a_deplacer:
+            self.fil.ia("Ton classement est déjà bien rangé : rien à déplacer.")
+            self._maj_accueil()
+            return
+        par_lieu = {}
+        for _, _, etiquette in a_deplacer:
+            par_lieu[etiquette] = par_lieu.get(etiquette, 0) + 1
+        lignes = [f"- **{lieu}** : {n}" for lieu, n in sorted(par_lieu.items(), key=lambda x: -x[1])]
+        self.fil.ia(f"**{len(a_deplacer)} fichiers** de ton ancien classement iraient dans les nouveaux thèmes :\n\n"
+                    + "\n".join(lignes[:12]) + (f"\n- … et {len(lignes) - 12} autres" if len(lignes) > 12 else "")
+                    + "\n\nRien n'a bougé. Clique ci-dessous pour appliquer (« annule » défait le dernier déplacement).")
+        self.fil.action(f"Appliquer : déplacer {len(a_deplacer)} fichiers", lambda: self._appliquer_plan(a_deplacer))
+        self._maj_accueil()
+        if self.mode != "discussion":
+            self._aller("discussion")
+
+    def _appliquer_plan(self, plan):
+        if self.occupee:
+            return
+        self.occupee = True
+        self._statut(f"Je range {len(plan)} fichiers…", "travail")
+
+        def travail():
+            faits, erreurs = classement.appliquer_plan(plan)
+            self.pont.reorganise.emit(faits, "; ".join(erreurs[:3]))
+
+        threading.Thread(target=travail, daemon=True).start()
+
+    def _reorganise_fini(self, faits, erreurs):
+        self.occupee = False
+        self.fil.action(f"{faits} fichiers rangés" + (f" (problèmes : {erreurs})" if erreurs else "")).terminer(not erreurs)
+        self._toast(f"{faits} fichiers rangés par thème", "erreur" if erreurs else "succes")
+        self._maj_accueil()
 
     def _maj_dispo(self, info):
         """Le veilleur a trouvé une version plus récente : on prévient, sans rien lancer."""
@@ -2532,4 +2794,29 @@ if __name__ == "__main__":
             ile._premier_plan()
 
     serveur.newConnection.connect(autre_lancement)
+
+    # ---- tableau de bord : raccourci clavier global, barre des tâches remise en quittant, réouverture au lancement
+    reglage_tableau = config.get("tableau") or {}
+    if ile.reglages.value("barre_a_remettre", False, type=bool):      # Dropi s'était arrêté sans la remettre
+        systeme.masquer_barre_windows(False)
+        ile.reglages.setValue("barre_a_remettre", False)
+    app.aboutToQuit.connect(ile.quitter_proprement)
+
+    class Raccourci(QAbstractNativeEventFilter):
+        def nativeEventFilter(self, genre, message):
+            if genre == b"windows_generic_MSG":
+                msg = wintypes.MSG.from_address(int(message))
+                if msg.message == systeme.WM_HOTKEY and msg.wParam == 1:
+                    ile._basculer_tableau()
+            return False, 0
+
+    raccourci = str(reglage_tableau.get("raccourci", "ctrl+alt+d"))
+    if raccourci.lower() not in ("", "non", "aucun") and systeme.enregistrer_raccourci(1, raccourci):
+        filtre_raccourci = Raccourci()
+        app.installNativeEventFilter(filtre_raccourci)
+        app.aboutToQuit.connect(lambda: systeme.liberer_raccourci(1))
+    ouvrir_au_lancement = str(reglage_tableau.get("au_lancement", "comme avant")).lower()
+    if ouvrir_au_lancement in ("oui", "true", "toujours") or (
+            ouvrir_au_lancement == "comme avant" and ile.reglages.value("tableau", False, type=bool)):
+        QTimer.singleShot(1200, ile._ouvrir_tableau)
     sys.exit(app.exec())

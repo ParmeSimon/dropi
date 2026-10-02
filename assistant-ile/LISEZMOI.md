@@ -261,6 +261,64 @@ ou écris « on joue ? », « je m'ennuie », « une partie de morpion », « pi
 
 Dropi réagit à chaque manche (content, vexé, surpris).
 
+## Le tableau de bord (Dropi en plein écran)
+
+Pour ne plus avoir besoin du bureau ni de la barre des tâches. Dans la goutte ouverte, clique sur le bouton
+**plein écran** (ou `Ctrl+Alt+D`, ou écris « tableau de bord ») : la goutte file au milieu de l'écran, Plop saute,
+retombe, et le liquide s'étale en tache ronde jusqu'à couvrir l'écran. La **pastille « Réduire »** en haut au milieu
+(ou `Échap`) le referme dans la goutte : le liquide se rétracte.
+
+En plein écran, il n'y a plus de goutte en haut : **Dropi est la mascotte du tableau de bord, en haut à gauche**. Sa
+bulle dit ce qu'il fait (« Je réfléchis… », « Rangé dans Études »). Un clic sur lui ouvre le **tchat** : c'est la même
+conversation que dans la goutte (même fil, même mémoire), au clavier ou au micro. La goutte ne réapparaît que si une
+autre appli passe devant, ou pour ses panneaux (mots de passe, mini-jeux, fichiers déposés).
+
+| Zone | Ce qu'elle fait |
+|---|---|
+| **Dropi** (en haut à gauche) | La mascotte et sa bulle ; un clic ouvre le tchat. |
+| **Recherche** | Tape quelques lettres : applis, jeux et fichiers rangés. `Entrée` lance le premier résultat, les flèches choisissent. Rien ne correspond ? La phrase part chez Dropi. |
+| **Mes applis** | Tes applis épinglées (au premier lancement : ton navigateur, ta messagerie, ton éditeur…). « Ajouter » pour en épingler une, clic droit pour la retirer ou la mettre en premier. |
+| **Mes jeux** | Ta bibliothèque avec les jaquettes, un clic pour lancer. |
+| **Mes fichiers** | Les 8 thèmes avec leur nombre de fichiers (« À trier » passe en jaune s'il y a quelque chose) et les derniers fichiers rangés. |
+| **Fenêtres ouvertes** | Ce que montrait la barre des tâches : un clic met la fenêtre devant, la croix (ou clic du milieu) la ferme. |
+
+**Le gestionnaire de fichiers** (clic sur un thème, ou « Tout voir ») : les thèmes à gauche, le contenu à droite,
+une recherche dans le dossier et ses sous-dossiers. Double-clic pour ouvrir, `Retour arrière` pour remonter,
+clic droit pour déplacer vers un autre thème, renommer, reclasser automatiquement ou mettre à la corbeille.
+Un fichier glissé depuis l'Explorateur est rangé tout seul ; on peut aussi faire glisser un fichier vers une autre appli.
+
+Il ne consomme presque rien : aucune animation en continu, l'heure se met à jour toutes les 20 secondes et la liste
+des fenêtres toutes les 2 secondes, seulement quand il est affiché. Tant qu'il est ouvert, la barre des tâches de
+Windows passe en masquage automatique ; elle retrouve son réglage quand tu le réduis ou que tu quittes Dropi
+(`tableau: masquer_barre_windows: false` pour ne pas y toucher).
+
+## Rangement par thème
+
+Dropi range tes fichiers (téléchargements, dépôts sur la goutte) **par thème de vie**, jamais « tout dans PDF » :
+
+```
+Documents/Dropi/
+  01 Études/        Cours, TP et projets, Examens et notes, Administratif école, Lectures
+  02 Travail/       Contrats et paie, CV et candidatures, Projets, Présentations, Réunions
+  03 Administratif/ Impôts, Santé, Banque, Assurances, Logement et énergie, Transports, Achats et factures, Identité et démarches
+  04 Perso/         Photos, Captures d'écran, Réseaux sociaux, Voyages, Divers
+  05 Médias/        Images, Vidéos, Musique
+  06 Jeux/          Mods et sauvegardes, Captures de jeu
+  07 Logiciels/     Installateurs, Archives, Code
+  99 À trier/       ce que ni les règles ni l'IA n'ont su placer
+```
+Chaque sous-dossier est découpé par année (`Administratif/Impôts/2026/avis-imposition.pdf`).
+
+Comment il choisit, dans l'ordre : les mots du **nom** (« facture EDF » -> Logement et énergie), le **site d'origine**
+(Ameli -> Santé, Moodle -> Cours), le **début du contenu** des PDF, Word et textes (pour « scan0042.pdf »), puis le type
+de fichier. Si c'est encore flou, le fichier va dans « 99 À trier » et l'**IA locale** le classe en tâche de fond
+(quelques dizaines de secondes, sans gêner tes discussions) ; tu es prévenu. `ia: false` dans `config.yaml` pour la couper.
+
+- « **Réorganise mon classement** » : Dropi montre ce qu'il déplacerait de l'ancien classement
+  (`Documents/Classement`, `Pictures/Classement`…) vers les thèmes, rien ne bouge avant ton clic.
+- « **Annule** » défait le dernier déplacement ; chaque déplacement est noté dans le journal.
+- Les dossiers vides disparaissent tout seuls. Le mode `type` (ancien rangement) reste disponible dans `config.yaml`.
+
 ## Convertir un fichier
 
 Dépose un fichier sur Dropi, puis **Convertir** (ou écris « convertis en jpg », « mets ça en pdf », « réduis l'image »).
